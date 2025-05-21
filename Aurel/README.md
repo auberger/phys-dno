@@ -4,12 +4,51 @@ This folder contains utilities for integrating the SKEL (Skinned Kinematic Estim
 
 ## Setup
 
+This code was tested on MacOS 15.1 (Arm architecture) and requires:
+
+* Python 3.9.22
+* conda3 or miniconda3
+* CUDA capable GPU (one is enough)
+
+### 1. Setup environment
+
+Install ffmpeg (if not already installed):
+
+```shell
+sudo apt update
+sudo apt install ffmpeg
+```
+For windows use [this](https://www.geeksforgeeks.org/how-to-install-ffmpeg-on-windows/) instead.
+
+
+### 2. Install dependencies
+
+DNO uses the same dependencies as GMD so if you already install one, you can use the same environment here.
+
+Setup conda env:
+
+```shell
+conda env create -f Aurel/Aurel/environment_physdno.yml.yml
+conda activate phys_dno
+conda remove --force ffmpeg
+python -m spacy download en_core_web_sm
+pip install git+https://github.com/openai/CLIP.git
+```
+
+Download dependencies:
+
+
+<summary><b>Text to Motion</b></summary>
+
+```bash
+bash prepare/download_smpl_files.sh
+bash prepare/download_glove.sh
+bash prepare/download_t2m_evaluators.sh
+```
+
 Before using the scripts in this folder, you need to set up the SKEL environment:
 
 ```bash
-# Activate conda environment you created for DNO
-conda activate gmd
-
 # Navigate to the SKEL directory
 cd external/SKEL
 
@@ -21,15 +60,17 @@ pip install git+https://github.com/mattloper/chumpy
 
 # Install SKEL in development mode
 pip install -e .
+
+# Create other env for visualizations only (requires python >3.10); we want to avoid compatibility issues
+# Navigate to the Aitviewer dir (used for visualization)
+cd ..
+cd aitviewer-skel
+
+# Install Aitviewer in development mode
+pip install -e .
+
 ```
 
-## Note
-
-environment_gmd_mac.yml is the adapted conda env file for Apple Silicon (M1/M2) Macs. Use the provided environment file if needed:
-
-```bash
-conda env create -f environment_gmd_mac.yml
-```
 
 ## Directory Structure
 

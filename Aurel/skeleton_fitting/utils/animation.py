@@ -19,11 +19,15 @@ def load_motion_data(npy_file):
     """
     # Load and process the npy file
     data = np.load(npy_file, allow_pickle=True)
-    data = data.item()["motion"][0]  # Extract the first motion sequence
-    
-    # Transpose data from (22, 3, 120) to (120, 22, 3)
-    data = np.transpose(data, (2, 0, 1))
-    print("Data shape:", data.shape)
+
+    try:
+        data = data.item()["motion"][0]  # Extract the first motion sequence
+        
+        # Transpose data from (22, 3, 120) to (120, 22, 3)
+        data = np.transpose(data, (2, 0, 1))
+        print("Data shape:", data.shape)
+    except:
+        data = data
     
     return data
 
@@ -193,7 +197,7 @@ def plot_static_skeleton_with_annotations(joints, kinematic_tree, frame_idx=0, s
     # Show plot
     plt.show()
 
-def run_animation_workflow(npy_file, kinematic_chain, fps=20, create_static_plot=False, 
+def run_animation_workflow(npy_file, fps=100, create_static_plot=False, 
                           save_distances=False, json_path="Aurel/skeleton_fitting/output/SMPL_distances.json", 
                           osim_csv_path="Aurel/skeleton_fitting/setup/distances_osim.csv"):
     """
@@ -201,7 +205,6 @@ def run_animation_workflow(npy_file, kinematic_chain, fps=20, create_static_plot
     
     Args:
         npy_file: Path to the NPY file containing motion data
-        kinematic_chain: List of lists defining the kinematic chains
         fps: Frames per second for the animation
         create_static_plot: Whether to create a static plot with joint annotations
         save_distances: Whether to save distance data to JSON
@@ -211,6 +214,9 @@ def run_animation_workflow(npy_file, kinematic_chain, fps=20, create_static_plot
     Returns:
         tuple: (motion_data, joint_distances_df, distance_data)
     """
+    # Define kinematic chain
+    kinematic_chain = [[0, 2, 5, 8, 11], [0, 1, 4, 7, 10], [0, 3, 6, 9, 12, 15], [9, 14, 17, 19, 21], [9, 13, 16, 18, 20]]
+
     # Load motion data
     motion_data = load_motion_data(npy_file)
     
@@ -234,5 +240,7 @@ def run_animation_workflow(npy_file, kinematic_chain, fps=20, create_static_plot
             json_path=json_path, 
             osim_csv_path=osim_csv_path
         )
+
+    print(f"Processed {npy_file} successfully.")
     
     return motion_data, joint_distances_df, distance_data

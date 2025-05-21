@@ -203,13 +203,9 @@ class SMPLify3D():
         global_orient.requires_grad = True
         camera_translation.requires_grad = True
 
-        # --- if we use the sequence, fix the shape
-        if seq_ind == 0:
-            betas.requires_grad = True
-            body_opt_params = [body_pose, betas, global_orient, camera_translation]
-        else:
-            betas.requires_grad = False
-            body_opt_params = [body_pose, global_orient, camera_translation]
+        # --- Always keep betas fixed to zeros
+        betas.requires_grad = False
+        body_opt_params = [body_pose, global_orient, camera_translation]
 
         if self.use_lbfgs:
             body_optimizer = torch.optim.LBFGS(body_opt_params, max_iter=self.num_iters,

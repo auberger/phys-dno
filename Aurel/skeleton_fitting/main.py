@@ -1,43 +1,41 @@
 import os
 from utils.animation import run_animation_workflow
-from utils.regress_joints import JointRegressor
+import utils.anatomical_joint_regressor as joint_regressor
+import utils.anatomical_joint_ik_adam as ik_fitter
 
-# Data paths
-npy_file = "Aurel/skeleton_fitting/dno_example_output_save/samples_000500000_avg_seed20_a_person_jumping/trajectory_editing_dno/npy_files/results.npy"
-
-# Define kinematic chain
-kinematic_chain = [[0, 2, 5, 8, 11], [0, 1, 4, 7, 10], [0, 3, 6, 9, 12, 15], [9, 14, 17, 19, 21], [9, 13, 16, 18, 20]]
+# Data path
+npy_file = "Aurel/skeleton_fitting/dno_example_output_save/samples_000500000_avg_seed20_a_person_jumping/trajectory_editing_dno/results.npy"
 
 # Animate joint locations of DNO output
-motion_data, joint_distances_df, distance_data = run_animation_workflow(
-    npy_file=npy_file,
-    kinematic_chain=kinematic_chain,
-    fps=20
+motion_data, joint_distances_df, distance_data = run_animation_workflow(npy_file=npy_file)
+
+######################### Apply regressor to motion sequence to get anatomical joint locations from SMPL joints #########################
+output_dir = "Aurel/skeleton_fitting/output/regressor"
+output_file = os.path.join(output_dir, "regressed_joints.npy")
+trial_idx = 1
+
+regressor = joint_regressor.SparseSMPLtoAnatomicalRegressor(output_dir=output_dir) # go to utils/anatomical_joint_regressor.py to change or retrain the regressor
+anatomical_joints = regressor.predict_anatomical_joints(
+    npy_file, 
+    output_dir, 
+    output_file=output_file,
+    trial=trial_idx
 )
 
-print(f"Processed {npy_file} successfully.")
-
-
-
-
-
-
-# Create regressor
-regressor = JointRegressor(output_dir="Aurel/skeleton_fitting/output")
-
-# Regress SKEL joints (neutral gender)
-regressor.regress_skel_joints(
-    gender="female",
-    create_visualizations=True,
-    rotate_output=True,
-    num_frames=10,
-    data_rate=60.0
+######################### Run IK to get anatomical joint locations from anatomical joint locations #########################
+fitter = ik_fitter.AnatomicalJointFitter(
+    output_dir="Aurel/skeleton_fitting/output/ik_fitter",
+    debug=True
 )
 
-# Convert motion data from NPY to TRC
-# regressor.convert_npy_to_trc(
-#     npy_path="output/results.npy",
-#     output_name="smpl_motion_jump",
-#     data_rate=30.0,
-#     rotate_output=False
-# ) 
+results = fitter.run_ik(
+    anatomical_joints_file=output_file,
+    output_file="jumping_ik_results.pkl",
+    max_iterations=150,
+    learning_rate=0.1,
+    pose_regularization=0.001,
+    trial=trial_idx
+)
+
+# Visulaze IK results by running the following in the command line (adapt the path to the results file):
+# python external/aitviewer-skel/examples/load_SKEL.py -s '/Users/auberger/Documents/Github_repos/phys-dno/Aurel/skeleton_fitting/output/ik_fitter/jumping_ik_results.pkl'

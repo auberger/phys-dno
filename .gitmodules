@@ -1,0 +1,9 @@
+[submodule "external/aitviewer-skel"]
+	path = external/aitviewer-skel
+	url = https://github.com/MarilynKeller/aitviewer-skel.git
+[submodule "external/SKEL"]
+	path = external/SKEL
+	url = https://github.com/MarilynKeller/SKEL.git
+[submodule "external/opencap-processing"]
+	path = external/opencap-processing
+	url = https://github.com/stanfordnmbl/opencap-processing.git

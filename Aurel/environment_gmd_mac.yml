@@ -1,4 +1,4 @@
-name: gmd
+name: gmd_mac
 channels:
   - pytorch
   - nvidia

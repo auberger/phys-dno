@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import trimesh
 from typing import Dict, List, Tuple, Optional, Union
+import skel.kin_skel as kin_skel
 
 class JointUtils:
     """
@@ -45,6 +46,13 @@ class JointUtils:
             "r_smpl_shoulder": 17, "l_smpl_elbow": 18, "r_smpl_elbow": 19,
             "l_smpl_hand": 20, "r_smpl_hand": 21
         }
+    
+    @staticmethod
+    def get_skel_marker_names() -> Dict[str, int]:
+        """
+        Get the SKEL marker names and their indices.
+        """
+        return {name: i for i, name in enumerate(kin_skel.skel_joints_name)}
     
     @staticmethod
     def compute_shoulders_middle(opensim_joints: np.ndarray) -> np.ndarray:
@@ -152,9 +160,10 @@ class JointUtils:
         print(f"Saved TRC file to {save_path}")
 
     @staticmethod
-    def write_smpl_trc_from_npy(
+    def write_trc_from_npy(
         npy_path: str, 
         save_path: str,
+        type: str = "smpl",
         data_rate: float = 30.0,
         rotate: bool = False
     ) -> None:
@@ -167,28 +176,51 @@ class JointUtils:
             data_rate (float, optional): Data rate in Hz. Defaults to 30.0.
             rotate (bool, optional): Whether to rotate joints 90 degrees around Y. Defaults to False.
         """
-        # Get SMPL marker names
-        marker_names_smpl = JointUtils.get_smpl_marker_names()
-        
-        # Load the NPY file
-        try:
-            joint_positions = np.load(npy_path, allow_pickle=True)
-            joint_positions = joint_positions.item()['motion'][0]
-            # Transpose data from (22, 3, N) to (N, 22, 3)
-            joint_positions = np.transpose(joint_positions, (2, 0, 1))
-        except Exception as e:
-            raise RuntimeError(f"Failed to load NPY file: {str(e)}")
-        
+
+        if type == "smpl":
+            # Get SMPL marker names
+            marker_names = JointUtils.get_smpl_marker_names()
+            
+            # Load the NPY file
+            try:
+                joint_positions = np.load(npy_path, allow_pickle=True)
+                joint_positions = joint_positions.item()['motion'][0]
+                # Transpose data from (22, 3, N) to (N, 22, 3)
+                joint_positions = np.transpose(joint_positions, (2, 0, 1))
+            except Exception as e:
+                try:
+                    joint_positions = np.load(npy_path, allow_pickle=True)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to load NPY file: {str(e)}")
+            
+        elif type == "skel":
+            # Get SKEL marker names
+            marker_names = JointUtils.get_skel_marker_names()
+
+            # Load the NPY file
+            try:
+                joint_positions = np.load(npy_path, allow_pickle=True)
+                joint_positions = joint_positions.item()['motion'][0]
+                # Transpose data from (22, 3, N) to (N, 22, 3)
+                joint_positions = np.transpose(joint_positions, (2, 0, 1))
+            except Exception as e:
+                try:
+                    joint_positions = np.load(npy_path, allow_pickle=True)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to load NPY file: {str(e)}")
+        else:
+            raise ValueError(f"Invalid type: {type}")
+
         # Number of frames
         num_frames = joint_positions.shape[0]
         
         # Create header
-        total_markers = len(marker_names_smpl)
+        total_markers = len(marker_names)
         header = [
             "PathFileType\t4\t(X/Y/Z)\tjoints.trc",
             "DataRate\tCameraRate\tNumFrames\tNumMarkers\tUnits\tOrigDataRate\tOrigDataStartFrame\tOrigNumFrames",
             f"{data_rate:.1f}\t{data_rate:.1f}\t{num_frames}\t{total_markers}\tm\t{data_rate:.1f}\t1\t{num_frames}",
-            "Frame#\tTime\t" + "\t".join([f"{name}\t\t" for name in marker_names_smpl.keys()]),
+            "Frame#\tTime\t" + "\t".join([f"{name}\t\t" for name in marker_names.keys()]),
             "\t\t" + "\t".join([f"X{i+1}\tY{i+1}\tZ{i+1}" for i in range(total_markers)])
         ]
         
@@ -206,7 +238,7 @@ class JointUtils:
                 row = [str(frame_idx + 1), f"{time_val:.6f}"]
                 
                 # Add joint positions for this frame
-                for name, idx in marker_names_smpl.items():
+                for name, idx in marker_names.items():
                     joint = joint_positions[frame_idx, idx]
                     if rotate:
                         joint = JointUtils.rotate_y_90(joint)
@@ -216,6 +248,7 @@ class JointUtils:
                 f.write("\t".join(row) + "\n")
         
         print(f"Saved TRC file to {save_path}")
+
 
     @staticmethod
     def save_mesh(vertices: np.ndarray, faces: np.ndarray, save_path: str) -> None:
