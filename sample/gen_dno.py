@@ -38,8 +38,8 @@ def main(num_trials=3):
     #############################################
     ### Task selection ###
     task = ""
-    task = "trajectory_editing"
-    # task = "pose_editing"
+    # task = "trajectory_editing"
+    task = "pose_editing"
     # task = "dense_optimization"
     # task = "motion_projection"
     # task = "motion_blending"

@@ -102,8 +102,9 @@ def task_pose_editing(task_info, args, target, target_mask):
     target_edit_list = [
         # (joint_index, keyframe, edit_dim, target(x, y, z))
         # (21, 90, [1], [1.0]), # Right hand at frame 90th, edit height to 1.0
-        (15, 90, [1], [0.6]), # Head at frame 90th, edit height to 1.0
-
+        # (15, 90, [1], [0.6]), # Head at frame 90th, edit height to 1.0
+	(0, 40, [1], 0.2),
+	(0, 80, [1], 0.5),
     ]
     kframes = []
     obs_list = []
