@@ -5,13 +5,15 @@ from utils.animation import run_animation_workflow, animate_with_contact_forces
 import utils.anatomical_joint_regressor as joint_regressor
 import utils.anatomical_joint_ik_adam as ik_fitter
 import Aurel.skeleton_fitting.utils.contact_models_torch as contact_models_torch
+import matplotlib
+matplotlib.use("TkAgg")
 
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # Data path
-npy_file = "save/samples_000500000_avg_seed20_a_person_jumping/trajectory_editing_dno/results.npy"
+npy_file = "save/samples_000500000_avg_seed20_a_person_is_jumping/pose_editing_dno/results.npy"
 
 # Animate joint locations of DNO output
 #motion_data, joint_distances_df, distance_data = run_animation_workflow(npy_file=npy_file)

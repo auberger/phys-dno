@@ -29,7 +29,7 @@ from utils.parser_util import generate_args
 
 def main(num_trials=3):
     num_ode_steps = 10
-    OPTIMIZATION_STEP = 10
+    OPTIMIZATION_STEP = 800
     #############################################
     ### Gradient Checkpointing
     # More DDIM steps will require more memory for full chain backprop.
@@ -72,7 +72,7 @@ def main(num_trials=3):
 
     dist_util.setup_dist(args.device)
     # Output directory
-    if out_path == "":
+    """     if out_path == "":
         # out_path = os.path.join(os.path.dirname(args.model_path),
         #                         'samples_{}_{}_seed{}_{}'.format(name, niter, args.seed, time.strftime("%Y%m%d-%H%M%S")))
         out_path = os.path.join(
@@ -82,6 +82,14 @@ def main(num_trials=3):
         if args.text_prompt != "":
             out_path += "_" + args.text_prompt.replace(" ", "_").replace(".", "")
 
+    out_path = os.path.join(out_path, task + "_dno")
+    args.output_dir = out_path """
+
+    if out_path == "":
+        out_path = os.path.join(
+            os.path.dirname(args.model_path),
+            args.text_prompt.replace(" ", "_").replace(".", ""),
+        )
     out_path = os.path.join(out_path, task + "_dno")
     args.output_dir = out_path
 
