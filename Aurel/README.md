@@ -28,9 +28,10 @@ DNO uses the same dependencies as GMD so if you already install one, you can use
 Setup conda env:
 
 ```shell
-conda env create -f Aurel/Aurel/environment_physdno.yml.yml
-conda activate phys_dno
+conda env create -f environment_gmd_updated.yml
+conda activate gmd_updated
 conda remove --force ffmpeg
+conda install anaconda::ffmpeg
 python -m spacy download en_core_web_sm
 pip install git+https://github.com/openai/CLIP.git
 ```
@@ -61,7 +62,7 @@ pip install git+https://github.com/mattloper/chumpy
 # Install SKEL in development mode
 pip install -e .
 
-# Create other env for visualizations only (requires python >3.10); we want to avoid compatibility issues
+# [OPTIONAL] Create other env for visualizations only (requires python >3.10); we want to avoid compatibility issues
 # Navigate to the Aitviewer dir (used for visualization)
 cd ..
 cd aitviewer-skel

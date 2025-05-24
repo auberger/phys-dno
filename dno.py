@@ -268,3 +268,4 @@ def noise_regularize_1d(noise, stop_at=2, dim=3):
         size //= 2
 
     return loss
+    

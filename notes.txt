@@ -1,0 +1,13 @@
+
+
+# Navigate to the SKEL directory
+cd external/SKEL
+
+# Update pip
+pip install -U pip   
+
+# Install chumpy from GitHub (required for SKEL)
+pip install git+https://github.com/mattloper/chumpy 
+
+# Install SKEL in development mode
+pip install -e .

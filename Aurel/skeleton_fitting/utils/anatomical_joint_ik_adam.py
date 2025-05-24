@@ -542,7 +542,13 @@ class AnatomicalJointFitter:
             visualize_frame: Frame index to visualize (if debug is enabled)
             
         Returns:
-            Dictionary with optimized parameters and metrics
+            Dictionary with optimized parameters and metrics, including:
+            - poses: Optimized pose parameters (PyTorch tensor)
+            - trans: Optimized translation parameters (PyTorch tensor)
+            - betas: Shape parameters (PyTorch tensor, fixed at zero)
+            - joints: Final joint positions (PyTorch tensor)
+            - joints_ori: Final joint orientations (PyTorch tensor)
+            - joint_errors: Per-frame joint position errors (PyTorch tensor)
         """
         # Load the anatomical joint positions
         print(f"Loading anatomical joint data from {anatomical_joints_file}")
@@ -564,31 +570,46 @@ class AnatomicalJointFitter:
             pose_regularization=pose_regularization
         )
         
+        # Get final joint positions and orientations
+        with torch.no_grad():
+            poses = torch.tensor(results['poses'], device=self.device)
+            betas = torch.tensor(results['betas'], device=self.device)
+            trans = torch.tensor(results['trans'], device=self.device)
+            
+            output = self.skel.forward(
+                poses=poses,
+                betas=betas,
+                trans=trans,
+                poses_type='skel',
+                skelmesh=False
+            )
+            
+            # Add joints and joints_ori to results as PyTorch tensors
+            results['joints'] = output.joints  # Keep as tensor
+            results['joints_ori'] = output.joints_ori  # Keep as tensor
+            results['poses'] = poses  # Keep as tensor
+            results['trans'] = trans  # Keep as tensor
+            results['betas'] = betas  # Keep as tensor
+            results['joint_errors'] = torch.tensor(results['joint_errors'], device=self.device)  # Convert to tensor
+        
         # Visualize if debug is enabled
         if self.debug:
-            # Forward pass to get the predicted joints
-            with torch.no_grad():
-                poses = torch.tensor(results['poses'], device=self.device)
-                betas = torch.tensor(results['betas'], device=self.device)
-                trans = torch.tensor(results['trans'], device=self.device)
-                
-                output = self.skel.forward(
-                    poses=poses,
-                    betas=betas,
-                    trans=trans,
-                    poses_type='skel',
-                    skelmesh=False
-                )
-                
-                predicted_joints = output.joints.cpu().numpy()
-                
-                # Visualize the specified frame
-                self.visualize_results(anatomical_joints, predicted_joints, frame_idx=visualize_frame)
+            predicted_joints = results['joints'].cpu().numpy()
+            self.visualize_results(anatomical_joints, predicted_joints, frame_idx=visualize_frame)
         
-        # Save results
+        # Save results (convert tensors to numpy for saving)
         if output_file is None:
             output_file = "ik_results.pkl"
-        self.save_results(results, filename=output_file)
+        save_dict = {
+            'poses': results['poses'].cpu().numpy(),
+            'trans': results['trans'].cpu().numpy(),
+            'betas': results['betas'].cpu().numpy(),
+            'joint_errors': results['joint_errors'].cpu().numpy(),
+            'joints': results['joints'].cpu().numpy(),
+            'joints_ori': results['joints_ori'].cpu().numpy(),
+            'gender': self.gender
+        }
+        self.save_results(save_dict, filename=output_file)
 
         print("IK fitting complete!") 
         
