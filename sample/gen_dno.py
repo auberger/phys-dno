@@ -27,9 +27,9 @@ from utils.output_util import (construct_template_variables, sample_to_motion,
 from utils.parser_util import generate_args
 
 
-def main(num_trials=3):
+def main(num_trials=1):
     num_ode_steps = 10
-    OPTIMIZATION_STEP = 800
+    OPTIMIZATION_STEP = 10
     #############################################
     ### Gradient Checkpointing
     # More DDIM steps will require more memory for full chain backprop.

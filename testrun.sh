@@ -8,4 +8,4 @@
 #SBATCH --output out/testtest.out
 
 #nvidia-smi
-python -m sample.gen_dno --model_path ./save/model000500000_avg.pt --seed 42 --text_prompt "a person does squats"
+python -m sample.gen_dno --model_path ./save/model000500000_avg.pt --seed 42 --text_prompt "a person does squats" --load_from "save/samples_000500000_avg_seed42_a_person_is_standing_still/pose_editing_dno"

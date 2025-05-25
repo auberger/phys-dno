@@ -10,11 +10,12 @@ import skel.kin_skel as kin_skel
 
 class SparseSMPLtoAnatomicalRegressor:
     def __init__(self, output_dir="output/regressor", gender="male", debug=False):
+        self.regressor = None
         self.debug = debug
         self.output_dir = output_dir
         self.gender = gender
         os.makedirs(output_dir, exist_ok=True)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         if (self.debug is True):
             print(f"Using device: {self.device}")
             print(f"Using gender: {self.gender}")
@@ -354,7 +355,7 @@ class SparseSMPLtoAnatomicalRegressor:
             'scalers': scaler_info,
             'joint_hierarchy': joint_hierarchy  # Save the hierarchy for reference
         }
-        
+
         with open(os.path.join(self.output_dir, f"smpl_to_osim_regressor_{self.gender}.pkl"), 'wb') as f:
             pickle.dump(regressor_data, f)
             
@@ -533,8 +534,46 @@ class SparseSMPLtoAnatomicalRegressor:
         
         return pred_joints
 
-    @staticmethod
-    def predict_anatomical_joints(smpl_joints, regressor_path, gender="male", output_file=None, trial=0):
+    def prepare_regressor_data_for_gpu(self, regressor_data: dict, device: torch.device) -> dict:
+            """
+            Moves PyTorch tensors and models within the regressor_data dictionary to the specified GPU device.
+            Also, converts numpy arrays within 'scalers' to torch.Tensor before moving.
+            """
+            processed_regressor_data = regressor_data # Modifying in place
+
+            # 1. Process 'regressors' (list of lists of torch.nn.Module)
+            if 'regressors' in processed_regressor_data and isinstance(processed_regressor_data['regressors'], list):
+                moved_regressors = []
+                for joint_regressors in processed_regressor_data['regressors']:
+                    moved_joint_regressors = []
+                    for model in joint_regressors:
+                        if isinstance(model, torch.nn.Module):
+                            model.eval() # Set models to eval mode when loading for inference
+                            moved_joint_regressors.append(model.to(device))
+                        else:
+                            moved_joint_regressors.append(model)
+                    moved_regressors.append(moved_joint_regressors)
+                processed_regressor_data['regressors'] = moved_regressors
+                # print(f"All PyTorch models in 'regressors' moved to device: {device}")
+
+            # 2. Process 'scalers' (dictionary of torch.Tensor or numpy.ndarray initially)
+            if 'scalers' in processed_regressor_data and isinstance(processed_regressor_data['scalers'], dict):
+                moved_scalers = {}
+                for key, value in processed_regressor_data['scalers'].items():
+                    if isinstance(value, np.ndarray): # <-- Add this check for numpy arrays
+                        value = torch.from_numpy(value).to(dtype=torch.float32) # Convert to tensor
+                    
+                    if isinstance(value, torch.Tensor): # Now it should be a tensor, so move it
+                        moved_scalers[key] = value.to(device)
+                    else:
+                        moved_scalers[key] = value # Keep non-tensor items as is
+                processed_regressor_data['scalers'] = moved_scalers
+                # print(f"All PyTorch tensors in 'scalers' moved to device: {device}")
+
+            # 3. 'joint_hierarchy' and other items (assuming they don't need GPU)
+            return processed_regressor_data
+
+    def predict_anatomical_joints(self, smpl_joints, regressor_path, gender="male", output_file=None, trial=0):
         """
         Predict anatomical joints from SMPL joints using the trained regressor.
         
@@ -548,21 +587,27 @@ class SparseSMPLtoAnatomicalRegressor:
         Returns:
             Predicted anatomical joint positions [frames, 24, 3]
         """
-        # Load regressor
-        regressor_file = os.path.join(regressor_path, f"smpl_to_osim_regressor_{gender}.pkl")
-        with open(regressor_file, 'rb') as f:
-            regressor_data = pickle.load(f)
-        
-        regressors = regressor_data['regressors']
-        scaler_info = regressor_data['scalers']
+        if (self.regressor is None):
+            # Load regressor
+            regressor_file = os.path.join(regressor_path, f"smpl_to_osim_regressor_{gender}.pkl")
+            with open(regressor_file, 'rb') as f:
+                regressor_data = pickle.load(f)
+            print(f"TEST HERE DEVICE {self.device}")
+
+            self.regressor = self.prepare_regressor_data_for_gpu(regressor_data, self.device)
+
+        regressors = self.regressor['regressors']
+        scaler_info = self.regressor['scalers']
+        print(f"TEST HERE DEVICE {scaler_info['smpl_mean'].device}")
 
 
         # Ensure we have 24 joints as expected by the regressor (pad if necessary)
         num_frames, num_joints, dims = smpl_joints.shape
         if num_joints < 24:
             # Pad with zeros to reach 24 joints
-            padding = np.zeros((num_frames, 24 - num_joints, dims))
-            smpl_joints = np.concatenate([smpl_joints, padding], axis=1)
+            padding_shape = (num_frames, 24 - num_joints, dims)
+            padding = torch.zeros(padding_shape, device=smpl_joints.device, dtype=smpl_joints.dtype) # Use dtype to match smpl_joints
+            smpl_joints = torch.cat([smpl_joints, padding], dim=1)
         elif num_joints > 24:
             # Truncate to 24 joints
             smpl_joints = smpl_joints[:, :24, :]
@@ -574,7 +619,7 @@ class SparseSMPLtoAnatomicalRegressor:
         X = smpl_joints_norm.reshape(num_frames, -1)
         
         # Predict anatomical joints
-        pred_joints = np.zeros((num_frames, 24, 3))
+        pred_joints = torch.zeros((num_frames, 24, 3))
         for joint_idx, joint_regressors in enumerate(regressors):
             for coord_idx, model in enumerate(joint_regressors):
                 pred_joints[:, joint_idx, coord_idx] = model.predict(X)

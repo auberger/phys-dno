@@ -14,7 +14,7 @@ def run_ik(input_joints=None, npy_file="", debug=False):
     else: mode = 'FILE_MODE'
 
     # Set device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     if (debug is True): print(f"Using device: {device}")
 
     # Animate joint locations of DNO output

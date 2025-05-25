@@ -6,6 +6,8 @@ import os
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 
+from inverse_dynamics.inverse_kinematics import run_ik
+
 
 def get_target_from_kframes(kframes, batch_size, m_length, device):
     '''Output from this function is already repeated by batch_size and moved to the target device.
@@ -664,6 +666,20 @@ class CondKeyLocationsLoss:
             loss_sum += loss_colli
             # # if self.print_every is not None a:
             # #     print("%03d: %f" % (int(t[0]), float(loss_sum) / batch_size))
+
+            ####################
+            # INVERSE DYNAMICS #
+            ####################
+            print(f"input device: {x_in_joints.device}")
+            dynamics = run_ik(x_in_joints[0])
+            grf = dynamics['total_force']
+            grf_magnitude = torch.norm(grf, p=2, dim=1)
+            gravity = torch.tensor(735.75, device=x_in_joints.device) # 75kg * 9.81 ms^-2
+            target_forces = torch.full_like(grf_magnitude, gravity)
+            loss_fn = F.mse_loss
+            kinematic_loss = loss_fn(grf_magnitude, target_forces)
+
+            loss_sum += kinematic_loss
 
             return loss_sum
 
