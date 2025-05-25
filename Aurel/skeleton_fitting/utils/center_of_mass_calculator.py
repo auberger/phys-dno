@@ -2,12 +2,25 @@
 """
 Center of Mass Calculator for Human Body Segments
 
-This script calculates the center of mass position and inertia tensor of the human body
-based on individual body segment properties and joint kinematics.
+This script calculates the center of mass position, inertia tensor, angular momentum,
+and moment about the center of mass of the human body based on individual body 
+segment properties and joint kinematics.
 
 The input joints are already in global coordinates (including root translation),
 and joint orientations are global rotation matrices. Mass centers and inertias
 are defined in local body coordinate frames and need to be transformed to global coordinates.
+
+Key Features:
+- Center of mass position, velocity, and acceleration calculation
+- Angular momentum about center of mass calculation
+- Moment about center of mass (rate of change of angular momentum)
+- Inertia tensor calculation about center of mass
+- Segment angular velocity calculations
+- Sophisticated derivative calculations with Savitzky-Golay smoothing
+- Support for different frame rates with automatic parameter adjustment
+
+The moment about COM can be compared with moments from ground reaction forces
+to validate dynamic consistency and enforce motion dynamics.
 """
 
 import torch
@@ -19,7 +32,7 @@ import json
 from scipy.signal import savgol_filter
 
 # Add the external SKEL path to import kin_skel
-import external.SKEL.skel.kin_skel as kin_skel
+import skel.kin_skel as kin_skel
 
 # Import body properties
 try:
@@ -35,17 +48,19 @@ class CenterOfMassCalculator:
     This class computes the overall center of mass and inertia tensor for a human body
     given joint positions, orientations, and individual body segment properties.
     
-    Note: Input joints are expected to be in global coordinates (including root translation),
-    and joint orientations are global rotation matrices. Mass centers and inertias are
-    transformed from local body coordinates to global coordinates.
+    IMPORTANT COORDINATE FRAME ASSUMPTIONS:
+    - Input joints are expected to be in global coordinates (including root translation)
+    - Joint orientations are global rotation matrices representing the local coordinate frame
+    - Mass centers and inertias are defined in local body coordinate frames (from body_properties)
+    - We assume that the joint coordinate frame is aligned with the mass center coordinate frame
+      for each segment (i.e., same orientation, just different origin)
+    - Inertia tensors in body_properties are about the mass centers, not joint origins
+    - Mass centers are transformed from local to global coordinates using joint positions and orientations
     """
     
-    def __init__(self, device: str = "cpu"):
+    def __init__(self):
         """
         Initialize the center of mass calculator.
-        
-        Args:
-            device: Device to run calculations on ("cpu" or "cuda")
         """
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.joint_names = kin_skel.skel_joints_name
@@ -122,7 +137,11 @@ class CenterOfMassCalculator:
                                  global_com: torch.Tensor) -> torch.Tensor:
         """
         Transform inertia tensors from local body coordinates to global coordinates
-        and apply parallel axis theorem.
+        and apply parallel axis theorem from mass centers to global COM.
+        
+        IMPORTANT: The inertia tensors in body_properties are defined about the mass centers
+        of each segment, not about the joint origins. We apply the parallel axis theorem
+        to transfer these inertias from the mass centers to the global center of mass.
         
         Args:
             joint_orientations: Joint orientation matrices of shape (B, 24, 3, 3) - global orientations
@@ -130,12 +149,13 @@ class CenterOfMassCalculator:
             global_com: Global center of mass position of shape (B, 3)
             
         Returns:
-            Total inertia tensor of shape (B, 3, 3)
+            Total inertia tensor about global COM of shape (B, 3, 3)
         """
         B = joint_orientations.shape[0]
         
         # Convert inertia vectors to 3x3 matrices
         # Inertia format: [Ixx, Iyy, Izz, Ixy, Ixz, Iyz]
+        # These are inertia tensors about the mass centers in local coordinates
         local_inertias = torch.zeros(B, 24, 3, 3, device=self.device)
         
         # Fill the inertia matrices
@@ -153,19 +173,20 @@ class CenterOfMassCalculator:
         
         # Transform inertia tensors to global coordinates
         # I_global = R @ I_local @ R^T
+        # Assuming joint orientations represent the mass center coordinate frame orientation
         R = joint_orientations  # (B, 24, 3, 3)
         R_T = R.transpose(-2, -1)  # (B, 24, 3, 3)
         
         global_inertias = torch.matmul(torch.matmul(R, local_inertias), R_T)  # (B, 24, 3, 3)
         
-        # Apply parallel axis theorem for each body segment
-        # I_total = I_cm + m * (d^2 * I - d ⊗ d)
-        # where d is the vector from global COM to segment COM
+        # Apply parallel axis theorem to transfer from mass centers to global COM
+        # I_about_global_COM = I_about_mass_center + m * (d^2 * I - d ⊗ d)
+        # where d is the vector from global COM to segment mass center
         
         masses_expanded = self.masses.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).expand(B, -1, 3, 3)  # (B, 24, 3, 3)
         global_com_expanded = global_com.unsqueeze(1).expand(-1, 24, -1)  # (B, 24, 3)
         
-        # Distance vectors from global COM to segment COMs
+        # Distance vectors from global COM to segment mass centers
         d_vectors = global_mass_centers - global_com_expanded  # (B, 24, 3)
         
         # Compute d^2 (squared distance)
@@ -177,14 +198,14 @@ class CenterOfMassCalculator:
         # Compute outer product d ⊗ d
         d_outer = torch.matmul(d_vectors.unsqueeze(-1), d_vectors.unsqueeze(-2))  # (B, 24, 3, 3)
         
-        # Apply parallel axis theorem
+        # Apply parallel axis theorem: I_total = I_cm + m * (d^2 * I - d ⊗ d)
         parallel_axis_correction = masses_expanded * (d_squared * I_eye - d_outer)
         
-        # Total inertia for each segment
-        segment_inertias = global_inertias + parallel_axis_correction
+        # Total inertia for each segment about global COM
+        segment_inertias_about_global_com = global_inertias + parallel_axis_correction
         
-        # Sum over all segments to get total body inertia
-        total_inertia = torch.sum(segment_inertias, dim=1)  # (B, 3, 3)
+        # Sum over all segments to get total body inertia about global COM
+        total_inertia = torch.sum(segment_inertias_about_global_com, dim=1)  # (B, 3, 3)
         
         return total_inertia
     
@@ -194,12 +215,12 @@ class CenterOfMassCalculator:
                                 fps: float = 20.0,
                                 smooth_derivatives: bool = True) -> Dict[str, torch.Tensor]:
         """
-        Calculate the center of mass position, velocity, and acceleration.
+        Calculate the center of mass position, velocity, acceleration, angular momentum, and moment.
         
         Args:
             joints: Joint positions tensor of shape (B, 24, 3) - already in global coordinates
             joints_ori: Joint orientation matrices of shape (B, 24, 3, 3) - global orientations
-            fps: Frame rate for derivative calculations (default: 120.0)
+            fps: Frame rate for derivative calculations (default: 20.0)
             smooth_derivatives: Whether to apply smoothing to velocity and acceleration (default: True)
             
         Returns:
@@ -207,10 +228,13 @@ class CenterOfMassCalculator:
                 - "com_position": Center of mass position (B, 3)
                 - "com_velocity": Center of mass velocity (B, 3)
                 - "com_acceleration": Center of mass acceleration (B, 3)
+                - "angular_momentum": Angular momentum about COM (B, 3)
+                - "moment_about_com": Moment about COM (rate of change of angular momentum) (B, 3)
                 - "inertia_tensor": Inertia tensor about COM (B, 3, 3)
                 - "total_mass": Total body mass (scalar)
                 - "segment_masses": Individual segment masses (24,)
                 - "segment_com_positions": Global segment COM positions (B, 24, 3)
+                - "segment_angular_velocities": Angular velocities of segments (B, 24, 3)
         """
         # Move tensors to the correct device
         joints = joints.to(self.device)
@@ -242,14 +266,38 @@ class CenterOfMassCalculator:
         # Calculate inertia tensor about center of mass
         inertia_tensor = self._transform_inertia_tensor(joints_ori, global_mass_centers, com_position)
         
+        # Calculate angular momentum about center of mass
+        angular_momentum = self._calculate_angular_momentum(
+            joints=joints,
+            joints_ori=joints_ori,
+            global_mass_centers=global_mass_centers,
+            com_position=com_position,
+            com_velocity=com_velocity,
+            inertia_tensor=inertia_tensor,
+            fps=fps
+        )
+        
+        # Calculate moment about center of mass (rate of change of angular momentum)
+        moment_about_com = self._calculate_moment_about_com(
+            angular_momentum=angular_momentum,
+            fps=fps,
+            smooth_derivatives=smooth_derivatives
+        )
+        
+        # Calculate segment angular velocities for additional analysis
+        segment_angular_velocities = self._calculate_angular_velocities(joints_ori, fps)
+        
         return {
             "com_position": com_position,
             "com_velocity": com_velocity,
             "com_acceleration": com_acceleration,
+            "angular_momentum": angular_momentum,
+            "moment_about_com": moment_about_com,
             "inertia_tensor": inertia_tensor,
             "total_mass": total_mass,
             "segment_masses": self.masses,
-            "segment_com_positions": global_mass_centers
+            "segment_com_positions": global_mass_centers,
+            "segment_angular_velocities": segment_angular_velocities
         }
     
     def get_body_properties_summary(self) -> Dict[str, float]:
@@ -352,6 +400,29 @@ class CenterOfMassCalculator:
             acc_magnitude = results['com_acceleration'].norm(dim=1)
             print(f"Average COM acceleration magnitude: {acc_magnitude.mean():.3f} m/s²")
             print(f"Max COM acceleration magnitude: {acc_magnitude.max():.3f} m/s²")
+
+        # Print angular momentum information
+        if "angular_momentum" in results and results["angular_momentum"] is not None:
+            print(f"Angular momentum shape: {results['angular_momentum'].shape}")
+            ang_mom_magnitude = results["angular_momentum"].norm(dim=1)
+            print(f"Average angular momentum magnitude: {ang_mom_magnitude.mean():.3f} kg⋅m²/s")
+            print(f"Max angular momentum magnitude: {ang_mom_magnitude.max():.3f} kg⋅m²/s")
+
+        # Print moment information
+        if "moment_about_com" in results and results["moment_about_com"] is not None:
+            print(f"Moment about COM shape: {results['moment_about_com'].shape}")
+            moment_magnitude = results["moment_about_com"].norm(dim=1)
+            print(f"Average moment magnitude: {moment_magnitude.mean():.3f} N⋅m")
+            print(f"Max moment magnitude: {moment_magnitude.max():.3f} N⋅m")
+
+        # Print segment angular velocities information
+        if "segment_angular_velocities" in results and results["segment_angular_velocities"] is not None:
+            print(f"Segment angular velocities shape: {results['segment_angular_velocities'].shape}")
+            seg_ang_vel_magnitude = results["segment_angular_velocities"].norm(dim=2)  # (B, 24)
+            avg_seg_ang_vel = seg_ang_vel_magnitude.mean()
+            max_seg_ang_vel = seg_ang_vel_magnitude.max()
+            print(f"Average segment angular velocity magnitude: {avg_seg_ang_vel:.3f} rad/s")
+            print(f"Max segment angular velocity magnitude: {max_seg_ang_vel:.3f} rad/s")
 
         # Print body properties summary
         if "body_properties_summary" in results:
@@ -529,6 +600,186 @@ class CenterOfMassCalculator:
         
         return velocity, acceleration
 
+    def _calculate_angular_momentum(self,
+                                   joints: torch.Tensor,
+                                   joints_ori: torch.Tensor,
+                                   global_mass_centers: torch.Tensor,
+                                   com_position: torch.Tensor,
+                                   com_velocity: torch.Tensor,
+                                   inertia_tensor: torch.Tensor,
+                                   fps: float = 20.0) -> torch.Tensor:
+        """
+        Calculate angular momentum about the center of mass.
+        
+        The total angular momentum about COM consists of:
+        1. Angular momentum due to translation of body segments relative to COM
+        2. Angular momentum due to rotation of body segments about their own mass centers
+        
+        IMPORTANT: Inertia tensors are defined about mass centers, not joint origins.
+        Joint orientations represent the local coordinate frame, which we assume is
+        aligned with the mass center coordinate frame for each segment.
+        
+        Args:
+            joints: Joint positions tensor of shape (B, 24, 3)
+            joints_ori: Joint orientation matrices of shape (B, 24, 3, 3)
+            global_mass_centers: Global mass center positions of shape (B, 24, 3)
+            com_position: Global center of mass position of shape (B, 3)
+            com_velocity: Center of mass velocity of shape (B, 3)
+            inertia_tensor: Total inertia tensor about COM of shape (B, 3, 3)
+            fps: Frame rate for calculating angular velocities
+            
+        Returns:
+            Angular momentum about COM of shape (B, 3)
+        """
+        B = joints.shape[0]
+        dt = 1.0 / fps
+        
+        # Calculate segment mass center velocities using smooth derivatives
+        segment_velocities = torch.zeros_like(global_mass_centers)  # (B, 24, 3)
+        
+        for segment_idx in range(24):
+            segment_pos = global_mass_centers[:, segment_idx, :]  # (B, 3)
+            segment_vel, _ = self._calculate_smooth_derivatives(
+                segment_pos, dt=dt, smooth_velocity=True, smooth_acceleration=False
+            )
+            segment_velocities[:, segment_idx, :] = segment_vel
+        
+        # 1. Angular momentum due to translation of segments relative to COM
+        # L_trans = Σ(r_i × m_i * v_i) where r_i is position of mass center relative to global COM
+        com_expanded = com_position.unsqueeze(1).expand(-1, 24, -1)  # (B, 24, 3)
+        relative_positions = global_mass_centers - com_expanded  # (B, 24, 3)
+        
+        masses_expanded = self.masses.unsqueeze(0).unsqueeze(-1).expand(B, -1, 3)  # (B, 24, 3)
+        momentum_vectors = masses_expanded * segment_velocities  # (B, 24, 3)
+        
+        # Cross product: r × (m*v)
+        angular_momentum_trans = torch.cross(relative_positions, momentum_vectors, dim=-1)  # (B, 24, 3)
+        angular_momentum_trans = torch.sum(angular_momentum_trans, dim=1)  # (B, 3)
+        
+        # 2. Angular momentum due to rotation of segments about their own mass centers
+        # L_rot = Σ(I_i * ω_i) where I_i is inertia tensor about mass center and ω_i is angular velocity
+        
+        # Calculate angular velocities of segments (assuming joint frame = mass center frame)
+        angular_velocities = self._calculate_angular_velocities(joints_ori, fps)  # (B, 24, 3)
+        
+        # Transform local inertias (about mass centers) to global coordinates
+        # Since inertia tensors are about mass centers, we use joint orientations assuming
+        # the joint coordinate frame is aligned with the mass center coordinate frame
+        local_inertias = torch.zeros(B, 24, 3, 3, device=self.device)
+        inertias_expanded = self.inertias.unsqueeze(0).expand(B, -1, -1)  # (B, 24, 6)
+        
+        # Fill the inertia matrices (these are about mass centers in local coordinates)
+        local_inertias[:, :, 0, 0] = inertias_expanded[:, :, 0]  # Ixx
+        local_inertias[:, :, 1, 1] = inertias_expanded[:, :, 1]  # Iyy
+        local_inertias[:, :, 2, 2] = inertias_expanded[:, :, 2]  # Izz
+        local_inertias[:, :, 0, 1] = inertias_expanded[:, :, 3]  # Ixy
+        local_inertias[:, :, 1, 0] = inertias_expanded[:, :, 3]  # Ixy (symmetric)
+        local_inertias[:, :, 0, 2] = inertias_expanded[:, :, 4]  # Ixz
+        local_inertias[:, :, 2, 0] = inertias_expanded[:, :, 4]  # Ixz (symmetric)
+        local_inertias[:, :, 1, 2] = inertias_expanded[:, :, 5]  # Iyz
+        local_inertias[:, :, 2, 1] = inertias_expanded[:, :, 5]  # Iyz (symmetric)
+        
+        # Transform inertia tensors to global coordinates: I_global = R @ I_local @ R^T
+        # Here we assume joint orientation represents the mass center coordinate frame
+        R = joints_ori  # (B, 24, 3, 3)
+        R_T = R.transpose(-2, -1)  # (B, 24, 3, 3)
+        global_segment_inertias = torch.matmul(torch.matmul(R, local_inertias), R_T)  # (B, 24, 3, 3)
+        
+        # Calculate rotational angular momentum: L_rot = I * ω
+        # This is the angular momentum of each segment about its own mass center
+        angular_momentum_rot = torch.zeros(B, 3, device=self.device)
+        for segment_idx in range(24):
+            if self.masses[segment_idx] > 0:  # Only process segments with mass
+                I_segment = global_segment_inertias[:, segment_idx, :, :]  # (B, 3, 3)
+                omega_segment = angular_velocities[:, segment_idx, :]  # (B, 3)
+                L_segment = torch.bmm(I_segment, omega_segment.unsqueeze(-1)).squeeze(-1)  # (B, 3)
+                angular_momentum_rot += L_segment
+        
+        # Total angular momentum about global COM
+        # This is the sum of translational and rotational components
+        total_angular_momentum = angular_momentum_trans + angular_momentum_rot
+        
+        return total_angular_momentum
+    
+    def _calculate_angular_velocities(self, joints_ori: torch.Tensor, fps: float = 20.0) -> torch.Tensor:
+        """
+        Calculate angular velocities from orientation matrices.
+        
+        Args:
+            joints_ori: Joint orientation matrices of shape (B, 24, 3, 3)
+            fps: Frame rate for derivative calculation
+            
+        Returns:
+            Angular velocities of shape (B, 24, 3)
+        """
+        B, num_joints, _, _ = joints_ori.shape
+        dt = 1.0 / fps
+        
+        angular_velocities = torch.zeros(B, num_joints, 3, device=self.device)
+        
+        if B < 2:
+            return angular_velocities
+        
+        for joint_idx in range(num_joints):
+            R = joints_ori[:, joint_idx, :, :]  # (B, 3, 3)
+            
+            # Calculate angular velocity using finite differences
+            # ω = (R_dot * R^T)_skew where _skew extracts the skew-symmetric part
+            
+            # Calculate R_dot using central differences
+            R_dot = torch.zeros_like(R)
+            
+            if B >= 3:
+                # Central difference for interior points
+                R_dot[1:-1] = (R[2:] - R[:-2]) / (2 * dt)
+                # Forward/backward difference for endpoints
+                R_dot[0] = (R[1] - R[0]) / dt
+                R_dot[-1] = (R[-1] - R[-2]) / dt
+            else:
+                # Simple difference for 2 points
+                R_dot[0] = (R[1] - R[0]) / dt
+                R_dot[1] = R_dot[0]
+            
+            # Calculate ω from R_dot * R^T
+            R_T = R.transpose(-2, -1)
+            omega_skew = torch.bmm(R_dot, R_T)  # (B, 3, 3)
+            
+            # Extract angular velocity from skew-symmetric matrix
+            # For skew-symmetric matrix S = [[0, -z, y], [z, 0, -x], [-y, x, 0]]
+            # The vector is [x, y, z]
+            angular_velocities[:, joint_idx, 0] = omega_skew[:, 2, 1]  # x component
+            angular_velocities[:, joint_idx, 1] = omega_skew[:, 0, 2]  # y component
+            angular_velocities[:, joint_idx, 2] = omega_skew[:, 1, 0]  # z component
+        
+        return angular_velocities
+    
+    def _calculate_moment_about_com(self,
+                                   angular_momentum: torch.Tensor,
+                                   fps: float = 20.0,
+                                   smooth_derivatives: bool = True) -> torch.Tensor:
+        """
+        Calculate moment (rate of change of angular momentum) about center of mass.
+        
+        Args:
+            angular_momentum: Angular momentum about COM of shape (B, 3)
+            fps: Frame rate for derivative calculation
+            smooth_derivatives: Whether to apply smoothing to the derivative
+            
+        Returns:
+            Moment about COM of shape (B, 3)
+        """
+        dt = 1.0 / fps
+        
+        # Calculate time derivative of angular momentum
+        moment, _ = self._calculate_smooth_derivatives(
+            angular_momentum,
+            dt=dt,
+            smooth_velocity=smooth_derivatives,
+            smooth_acceleration=False
+        )
+        
+        return moment
+
 
 def calculate_com_from_kinematics(joints: Union[torch.Tensor, np.ndarray], 
                                  joints_ori: Union[torch.Tensor, np.ndarray],
@@ -566,6 +817,64 @@ def calculate_com_from_kinematics(joints: Union[torch.Tensor, np.ndarray],
     )
     
     return results
+
+
+def calculate_moment_about_com_from_kinematics(joints: Union[torch.Tensor, np.ndarray], 
+                                              joints_ori: Union[torch.Tensor, np.ndarray],
+                                              device: str = "cpu",
+                                              fps: float = 20.0,
+                                              smooth_derivatives: bool = True) -> Dict[str, torch.Tensor]:
+    """
+    Convenience function to calculate moment about center of mass from joint kinematics.
+    
+    This function is specifically designed for comparing with moments from ground reaction forces
+    to validate dynamic consistency. The moment about COM represents the rate of change of 
+    angular momentum and should equal the sum of all external moments acting on the body.
+    
+    Args:
+        joints: Joint positions (B, 24, 3) - can be numpy array or torch tensor (global coordinates)
+        joints_ori: Joint orientations (B, 24, 3, 3) - can be numpy array or torch tensor (global orientations)
+        device: Device to run calculations on
+        fps: Frame rate for derivative calculations (default: 20.0)
+        smooth_derivatives: Whether to apply smoothing to derivatives (default: True)
+        
+    Returns:
+        Dictionary with key results for dynamics validation:
+            - "moment_about_com": Moment about COM (B, 3) [N⋅m]
+            - "angular_momentum": Angular momentum about COM (B, 3) [kg⋅m²/s]
+            - "com_position": Center of mass position (B, 3) [m]
+            - "com_velocity": Center of mass velocity (B, 3) [m/s]
+            - "com_acceleration": Center of mass acceleration (B, 3) [m/s²]
+            - "inertia_tensor": Inertia tensor about COM (B, 3, 3) [kg⋅m²]
+            - "total_mass": Total body mass [kg]
+    """
+    # Convert to torch tensors if needed
+    if isinstance(joints, np.ndarray):
+        joints = torch.from_numpy(joints).float()
+    if isinstance(joints_ori, np.ndarray):
+        joints_ori = torch.from_numpy(joints_ori).float()
+    
+    # Initialize calculator
+    calculator = CenterOfMassCalculator()
+    
+    # Calculate full COM analysis
+    full_results = calculator.calculate_center_of_mass(
+        joints, 
+        joints_ori, 
+        fps=fps, 
+        smooth_derivatives=smooth_derivatives
+    )
+    
+    # Return subset focused on dynamics validation
+    return {
+        "moment_about_com": full_results["moment_about_com"],
+        "angular_momentum": full_results["angular_momentum"],
+        "com_position": full_results["com_position"],
+        "com_velocity": full_results["com_velocity"],
+        "com_acceleration": full_results["com_acceleration"],
+        "inertia_tensor": full_results["inertia_tensor"],
+        "total_mass": full_results["total_mass"]
+    }
 
 
 # Test functions for when script is run directly
@@ -634,17 +943,17 @@ def create_dummy_joint_data(com_trajectory: torch.Tensor):
 
 def test_derivative_calculation():
     """Test the derivative calculation with different settings."""
-    print("Testing Velocity and Acceleration Calculation")
-    print("=" * 60)
+    print("Testing Velocity, Acceleration, Angular Momentum, and Moment Calculation")
+    print("=" * 70)
     
     # Create realistic motion data with 20 fps (your actual frame rate)
     motion_data = create_realistic_motion_data(num_frames=120, fps=20.0)
     
-    # Create dummy joint data
-    joints, joints_ori = create_dummy_joint_data(motion_data["position_noisy"])
+    # Create dummy joint data with some rotation
+    joints, joints_ori = create_dummy_joint_data_with_rotation(motion_data["position_noisy"])
     
     # Initialize calculator
-    calculator = CenterOfMassCalculator(device="cpu")
+    calculator = CenterOfMassCalculator()
     
     # Test different configurations - focused on 20 fps and relevant comparisons
     configs = [
@@ -672,14 +981,69 @@ def test_derivative_calculation():
         # Print summary statistics
         vel_mag = com_results["com_velocity"].norm(dim=1)
         acc_mag = com_results["com_acceleration"].norm(dim=1)
+        ang_mom_mag = com_results["angular_momentum"].norm(dim=1)
+        moment_mag = com_results["moment_about_com"].norm(dim=1)
         
         print(f"  Velocity - Mean: {vel_mag.mean():.3f} m/s, Max: {vel_mag.max():.3f} m/s")
         print(f"  Acceleration - Mean: {acc_mag.mean():.3f} m/s², Max: {acc_mag.max():.3f} m/s²")
+        print(f"  Angular Momentum - Mean: {ang_mom_mag.mean():.3f} kg⋅m²/s, Max: {ang_mom_mag.max():.3f} kg⋅m²/s")
+        print(f"  Moment about COM - Mean: {moment_mag.mean():.3f} N⋅m, Max: {moment_mag.max():.3f} N⋅m")
     
     return results, motion_data
 
+def create_dummy_joint_data_with_rotation(com_trajectory: torch.Tensor):
+    """Create dummy joint data with rotation that produces the given COM trajectory."""
+    num_frames, _ = com_trajectory.shape
+    num_joints = 24
+    
+    # Create dummy joint positions centered around the COM
+    joints = torch.zeros(num_frames, num_joints, 3)
+    
+    # Distribute joints around the COM with some random offsets
+    for i in range(num_joints):
+        offset = torch.randn(3) * 0.3  # Random offset for each joint
+        joints[:, i, :] = com_trajectory + offset.unsqueeze(0)
+    
+    # Create rotation matrices with some time-varying rotation
+    joints_ori = torch.zeros(num_frames, num_joints, 3, 3)
+    
+    # Time vector for creating rotations
+    t = torch.linspace(0, 2*np.pi, num_frames)
+    
+    for i in range(num_joints):
+        for frame in range(num_frames):
+            # Create rotation around different axes for different joints
+            angle_x = 0.1 * torch.sin(t[frame] + i * 0.1)  # Small rotation around X
+            angle_y = 0.1 * torch.cos(t[frame] + i * 0.2)  # Small rotation around Y  
+            angle_z = 0.05 * torch.sin(2 * t[frame] + i * 0.3)  # Small rotation around Z
+            
+            # Create rotation matrices
+            cos_x, sin_x = torch.cos(angle_x), torch.sin(angle_x)
+            cos_y, sin_y = torch.cos(angle_y), torch.sin(angle_y)
+            cos_z, sin_z = torch.cos(angle_z), torch.sin(angle_z)
+            
+            # Rotation around X
+            Rx = torch.tensor([[1, 0, 0],
+                              [0, cos_x, -sin_x],
+                              [0, sin_x, cos_x]], dtype=torch.float32)
+            
+            # Rotation around Y
+            Ry = torch.tensor([[cos_y, 0, sin_y],
+                              [0, 1, 0],
+                              [-sin_y, 0, cos_y]], dtype=torch.float32)
+            
+            # Rotation around Z
+            Rz = torch.tensor([[cos_z, -sin_z, 0],
+                              [sin_z, cos_z, 0],
+                              [0, 0, 1]], dtype=torch.float32)
+            
+            # Combined rotation
+            joints_ori[frame, i] = Rz @ Ry @ Rx
+    
+    return joints, joints_ori
+
 def plot_comparison(results: dict, motion_data: dict, save_plots: bool = True):
-    """Plot comparison of different derivative calculation methods."""
+    """Plot comparison of different derivative calculation methods including angular momentum and moment."""
     try:
         import matplotlib.pyplot as plt
     except ImportError:
@@ -688,23 +1052,23 @@ def plot_comparison(results: dict, motion_data: dict, save_plots: bool = True):
     
     time = motion_data["time"].numpy()
     
-    # Create figure with subplots
-    fig, axes = plt.subplots(3, 3, figsize=(15, 12))
-    fig.suptitle("COM Derivatives Comparison: Position, Velocity, and Acceleration (20 fps focus)", fontsize=16)
+    # Create figure with more subplots to include angular momentum and moment
+    fig, axes = plt.subplots(4, 3, figsize=(18, 16))
+    fig.suptitle("COM Analysis: Position, Velocity, Acceleration, Angular Momentum, and Moment (20 fps focus)", fontsize=16)
     
     # Plot position (Y-axis only for clarity)
-    axes[0, 0].plot(time, motion_data["position_clean"][:, 1].numpy(), 'k-', label='Clean', linewidth=2)
-    axes[0, 0].plot(time, motion_data["position_noisy"][:, 1].numpy(), 'gray', alpha=0.7, label='Noisy')
+    axes[0, 0].plot(time, motion_data["position_clean"][:, 1].numpy(), "k-", label="Clean", linewidth=2)
+    axes[0, 0].plot(time, motion_data["position_noisy"][:, 1].numpy(), "gray", alpha=0.7, label="Noisy")
     for name, result in results.items():
         if "20fps" in name:  # Focus on 20fps results
-            axes[0, 0].plot(time, result["com_position"][:, 1].numpy(), '--', label=f'Calculated ({name})')
+            axes[0, 0].plot(time, result["com_position"][:, 1].numpy(), "--", label=f"Calculated ({name})")
     axes[0, 0].set_title("Y Position")
     axes[0, 0].set_ylabel("Position (m)")
     axes[0, 0].legend()
     axes[0, 0].grid(True)
     
     # Plot velocity magnitude
-    axes[0, 1].plot(time, motion_data["velocity_analytical"].norm(dim=1).numpy(), 'k-', label='Analytical', linewidth=2)
+    axes[0, 1].plot(time, motion_data["velocity_analytical"].norm(dim=1).numpy(), "k-", label="Analytical", linewidth=2)
     for name, result in results.items():
         axes[0, 1].plot(time, result["com_velocity"].norm(dim=1).numpy(), label=name)
     axes[0, 1].set_title("Velocity Magnitude")
@@ -713,7 +1077,7 @@ def plot_comparison(results: dict, motion_data: dict, save_plots: bool = True):
     axes[0, 1].grid(True)
     
     # Plot acceleration magnitude
-    axes[0, 2].plot(time, motion_data["acceleration_analytical"].norm(dim=1).numpy(), 'k-', label='Analytical', linewidth=2)
+    axes[0, 2].plot(time, motion_data["acceleration_analytical"].norm(dim=1).numpy(), "k-", label="Analytical", linewidth=2)
     for name, result in results.items():
         axes[0, 2].plot(time, result["com_acceleration"].norm(dim=1).numpy(), label=name)
     axes[0, 2].set_title("Acceleration Magnitude")
@@ -722,33 +1086,80 @@ def plot_comparison(results: dict, motion_data: dict, save_plots: bool = True):
     axes[0, 2].grid(True)
     
     # Plot velocity components (X, Y, Z)
-    for i, component in enumerate(['X', 'Y', 'Z']):
-        axes[1, i].plot(time, motion_data["velocity_analytical"][:, i].numpy(), 'k-', label='Analytical', linewidth=2)
+    for i, component in enumerate(["X", "Y", "Z"]):
+        axes[1, i].plot(time, motion_data["velocity_analytical"][:, i].numpy(), "k-", label="Analytical", linewidth=2)
         for name, result in results.items():
             if "20fps" in name:  # Focus on 20fps results for clarity
-                axes[1, i].plot(time, result["com_velocity"][:, i].numpy(), '--', label=name)
+                axes[1, i].plot(time, result["com_velocity"][:, i].numpy(), "--", label=name)
         axes[1, i].set_title(f"Velocity {component}")
         axes[1, i].set_ylabel("Velocity (m/s)")
         axes[1, i].legend()
         axes[1, i].grid(True)
     
     # Plot acceleration components (X, Y, Z)
-    for i, component in enumerate(['X', 'Y', 'Z']):
-        axes[2, i].plot(time, motion_data["acceleration_analytical"][:, i].numpy(), 'k-', label='Analytical', linewidth=2)
+    for i, component in enumerate(["X", "Y", "Z"]):
+        axes[2, i].plot(time, motion_data["acceleration_analytical"][:, i].numpy(), "k-", label="Analytical", linewidth=2)
         for name, result in results.items():
             if "20fps" in name:  # Focus on 20fps results for clarity
-                axes[2, i].plot(time, result["com_acceleration"][:, i].numpy(), '--', label=name)
+                axes[2, i].plot(time, result["com_acceleration"][:, i].numpy(), "--", label=name)
         axes[2, i].set_title(f"Acceleration {component}")
         axes[2, i].set_ylabel("Acceleration (m/s²)")
-        axes[2, i].set_xlabel("Time (s)")
         axes[2, i].legend()
         axes[2, i].grid(True)
+    
+    # Plot angular momentum components (X, Y, Z)
+    for i, component in enumerate(["X", "Y", "Z"]):
+        for name, result in results.items():
+            if "20fps" in name:  # Focus on 20fps results for clarity
+                axes[3, i].plot(time, result["angular_momentum"][:, i].numpy(), label=name)
+        axes[3, i].set_title(f"Angular Momentum {component}")
+        axes[3, i].set_ylabel("Angular Momentum (kg⋅m²/s)")
+        axes[3, i].set_xlabel("Time (s)")
+        axes[3, i].legend()
+        axes[3, i].grid(True)
     
     plt.tight_layout()
     
     if save_plots:
-        plt.savefig("com_derivatives_comparison_20fps.png", dpi=300, bbox_inches='tight')
-        print("Plot saved as: com_derivatives_comparison_20fps.png")
+        plt.savefig("com_analysis_comparison_20fps.png", dpi=300, bbox_inches="tight")
+        print("Plot saved as: com_analysis_comparison_20fps.png")
+    
+    # Create a second figure for moment analysis
+    fig2, axes2 = plt.subplots(2, 2, figsize=(12, 8))
+    fig2.suptitle("Moment about COM Analysis (20 fps focus)", fontsize=16)
+    
+    # Plot moment magnitude
+    for name, result in results.items():
+        axes2[0, 0].plot(time, result["moment_about_com"].norm(dim=1).numpy(), label=name)
+    axes2[0, 0].set_title("Moment Magnitude")
+    axes2[0, 0].set_ylabel("Moment (N⋅m)")
+    axes2[0, 0].legend()
+    axes2[0, 0].grid(True)
+    
+    # Plot angular momentum magnitude
+    for name, result in results.items():
+        axes2[0, 1].plot(time, result["angular_momentum"].norm(dim=1).numpy(), label=name)
+    axes2[0, 1].set_title("Angular Momentum Magnitude")
+    axes2[0, 1].set_ylabel("Angular Momentum (kg⋅m²/s)")
+    axes2[0, 1].legend()
+    axes2[0, 1].grid(True)
+    
+    # Plot moment components (X, Y)
+    for i, component in enumerate(["X", "Y"]):
+        for name, result in results.items():
+            if "20fps" in name:  # Focus on 20fps results for clarity
+                axes2[1, i].plot(time, result["moment_about_com"][:, i].numpy(), label=name)
+        axes2[1, i].set_title(f"Moment {component}")
+        axes2[1, i].set_ylabel("Moment (N⋅m)")
+        axes2[1, i].set_xlabel("Time (s)")
+        axes2[1, i].legend()
+        axes2[1, i].grid(True)
+    
+    plt.tight_layout()
+    
+    if save_plots:
+        plt.savefig("moment_analysis_20fps.png", dpi=300, bbox_inches="tight")
+        print("Moment plot saved as: moment_analysis_20fps.png")
     
     plt.show()
 
@@ -772,14 +1183,18 @@ def save_test_results(results: dict, motion_data: dict):
             "com_position": result["com_position"].tolist(),
             "com_velocity": result["com_velocity"].tolist(),
             "com_acceleration": result["com_acceleration"].tolist(),
-            "total_mass": float(result["total_mass"])
+            "angular_momentum": result["angular_momentum"].tolist(),
+            "moment_about_com": result["moment_about_com"].tolist(),
+            "total_mass": float(result["total_mass"]),
+            "inertia_tensor": result["inertia_tensor"].tolist(),
+            "segment_angular_velocities": result["segment_angular_velocities"].tolist()
         }
     
     # Save to file
-    with open("com_derivatives_test_results.json", "w") as f:
+    with open("com_analysis_test_results.json", "w") as f:
         json.dump(json_data, f, indent=2)
     
-    print("Test results saved to: com_derivatives_test_results.json")
+    print("Test results saved to: com_analysis_test_results.json")
 
 def calculate_errors(results: dict, motion_data: dict):
     """Calculate and print error statistics."""
@@ -803,6 +1218,7 @@ def run_comprehensive_test():
     print("Enhanced Center of Mass Calculator - Comprehensive Test Suite")
     print("=" * 70)
     print("Testing with 20 fps data (120 frames = 6 seconds of motion)")
+    print("Including Angular Momentum and Moment about COM calculations")
     print("=" * 70)
     
     try:
@@ -824,8 +1240,11 @@ def run_comprehensive_test():
         print("\nFeatures demonstrated:")
         print("✓ Sophisticated velocity calculation using Savitzky-Golay smoothing")
         print("✓ Accurate acceleration calculation with central differences")
+        print("✓ Angular momentum calculation about center of mass")
+        print("✓ Moment calculation (rate of change of angular momentum)")
+        print("✓ Segment angular velocity calculations")
         print("✓ Comparison of smoothed vs unsmoothed derivatives")
-        print("✓ Support for different frame rates (20, 30, 60 fps)")
+        print("✓ Support for different frame rates (20, 25 fps)")
         print("✓ Optimized smoothing parameters for lower frame rates")
         print("✓ Error analysis against analytical solutions")
         print("✓ Comprehensive visualization of results")
@@ -834,6 +1253,10 @@ def run_comprehensive_test():
         
         print(f"\nNote: Your data at 20 fps provides {motion_data['time'][-1]:.1f} seconds of motion")
         print("The algorithm automatically adjusts time step (dt = 0.05s) for accurate derivatives.")
+        print("\nAngular momentum and moment calculations enable:")
+        print("• Comparison with moments from ground reaction forces")
+        print("• Validation of dynamic consistency")
+        print("• Analysis of rotational motion characteristics")
         
     except Exception as e:
         print(f"\n✗ Test failed with error: {e}")

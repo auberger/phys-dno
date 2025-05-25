@@ -108,7 +108,10 @@ class AnatomicalJointFitter:
 
         # SKEL pose parameter names for reference
         self.pose_param_names = kin_skel.pose_param_names
-    
+
+    def to_tensor(self, x, device):
+        return x if isinstance(x, torch.Tensor) else torch.tensor(x, dtype=torch.float32, device=device)
+
     def _init_parameters(self, target_joints, initial_poses=None, initial_trans=None):
         """
         Initialize parameters for optimization.
@@ -133,14 +136,14 @@ class AnatomicalJointFitter:
             poses[:, self.pose_param_names.index('knee_angle_r')] = 0.1
             poses[:, self.pose_param_names.index('knee_angle_l')] = 0.1
         else:
-            poses = torch.tensor(initial_poses, dtype=torch.float32, device=self.device)
+            poses = self.to_tensor(initial_poses, self.device)
             
         # Initialize translation parameters
         if initial_trans is None:
             # Use target pelvis position as initial translation
-            trans = torch.tensor(target_joints[:, 0, :], dtype=torch.float32, device=self.device)
+            trans = self.to_tensor(target_joints[:, 0, :], self.device)
         else:
-            trans = torch.tensor(initial_trans, dtype=torch.float32, device=self.device)
+            trans = self.to_tensor(initial_trans, self.device)
             
         # Beta is fixed at zero for this fitter (as per requirements)
         betas = torch.zeros((num_frames, 10), device=self.device)
@@ -149,7 +152,7 @@ class AnatomicalJointFitter:
             'poses': poses,
             'betas': betas,
             'trans': trans,
-            'target_joints': torch.tensor(target_joints, dtype=torch.float32, device=self.device)
+            'target_joints': self.to_tensor(target_joints, self.device)
         }
     
     def fit_sequence(self, 
@@ -182,10 +185,10 @@ class AnatomicalJointFitter:
         
         # Initialize the output dictionary
         res_dict = {
-            'poses': [],
-            'trans': [],
-            'betas': [],
-            'joint_errors': [],
+            'poses': None,
+            'trans': None,
+            'betas': None,
+            'joint_errors': None,
             'gender': self.gender
         }
         
@@ -201,146 +204,114 @@ class AnatomicalJointFitter:
         batch_result = self._optimize_batch(batch_params, max_iterations, learning_rate, pose_regularization)
         
         # Store the results
-        res_dict['poses'] = batch_result['poses'].detach().cpu().numpy()
-        res_dict['trans'] = batch_result['trans'].detach().cpu().numpy()
-        res_dict['betas'] = batch_result['betas'].detach().cpu().numpy()
-        res_dict['joint_errors'] = batch_result['joint_errors'].detach().cpu().numpy()
+        res_dict['poses'] = batch_result['poses'].detach()
+        res_dict['trans'] = batch_result['trans'].detach()
+        res_dict['betas'] = batch_result['betas'].detach()
+        res_dict['joint_errors'] = batch_result['joint_errors'].detach()
         
         # Compute overall metrics
-        mean_joint_error = np.mean(res_dict['joint_errors']) * 1000  # Convert to mm
-        max_joint_error = np.max(res_dict['joint_errors']) * 1000  # Convert to mm
+        mean_joint_error = torch.mean(res_dict['joint_errors']) * 1000  # Convert to mm
+        max_joint_error = torch.max(res_dict['joint_errors']) * 1000   # Convert to mm
         
         print(f"Fitting complete. Mean joint error: {mean_joint_error:.2f} mm, Max joint error: {max_joint_error:.2f} mm")
         
         # If debug is enabled, plot the error distribution
         if self.debug:
-            self._plot_error_distribution(res_dict['joint_errors'])
+            self._plot_error_distribution(res_dict['joint_errors'].cpu())
         
         return res_dict
     
     def _optimize_batch(self, batch_params, max_iterations, learning_rate, pose_regularization):
         """
         Optimize a batch of frames.
-        
-        Args:
-            batch_params: Dictionary with batch parameters
-            max_iterations: Maximum iterations for optimization
-            learning_rate: Learning rate for the optimizer
-            pose_regularization: Weight for pose regularization
-            
-        Returns:
-            Dictionary with optimized parameters and metrics
         """
+        device = self.device
+        
+        # Ensure all tensors are on the correct device
+        for key in ['poses', 'betas', 'trans', 'target_joints']:
+            batch_params[key] = batch_params[key].to(device)
+
         # Create optimizer for pose and translation parameters
         optimizer = torch.optim.Adam([
             {'params': batch_params['poses']},
             {'params': batch_params['trans']}
         ], lr=learning_rate)
         
-        # Add learning rate scheduler
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, 
-            T_max=max_iterations,
-            eta_min=learning_rate * 0.01  # Minimum learning rate will be 1% of initial
+            optimizer, T_max=max_iterations, eta_min=learning_rate * 0.01
         )
         
-        # Keep track of the best result
         best_error = float('inf')
-        best_params = {
-            'poses': batch_params['poses'].clone().detach(),
-            'trans': batch_params['trans'].clone().detach(),
-            'betas': batch_params['betas'].clone().detach()
-        }
-        
-        # Track losses and errors over iterations
+        best_params = {}
+
         loss_history = []
         error_history = []
-        
-        # Early stopping variables
-        min_error_improvement = 0.1  # Stop if error improvement is less than 0.1mm
-        patience = 10  # Number of iterations to wait for improvement
+
+        min_error_improvement = 0.1
+        patience = 10
         no_improvement_count = 0
         last_error_mm = float('inf')
-        
-        # Optimization loop
+
         for iter_idx in range(max_iterations):
             optimizer.zero_grad()
-            
-            # Forward pass: compute SKEL joints
+
             output = self.skel.forward(
                 poses=batch_params['poses'],
                 betas=batch_params['betas'],
                 trans=batch_params['trans'],
                 poses_type='skel',
-                skelmesh=False  # We don't need the mesh
+                skelmesh=False
             )
-            
-            # Compute losses
+
             loss_dict = self._compute_losses(
-                output.joints, 
+                output.joints,
                 batch_params['target_joints'],
                 batch_params['poses'],
                 pose_regularization
             )
-            
-            # Total loss
+
             total_loss = sum(loss_dict.values())
+
+            loss_history.append(total_loss.detach().cpu())
+            error_history.append(loss_dict['joint_position_error'].detach().cpu())
             
-            # Track losses and errors
-            loss_history.append(total_loss.item())
-            error_history.append(loss_dict['joint_position_error'].item())
-            
-            # Backward pass
             total_loss.backward()
-            
-            # Apply pose limits
+
             with torch.no_grad():
                 for param_idx, param_name in enumerate(self.pose_param_names):
                     if param_name in self.pose_limits:
                         min_val, max_val = self.pose_limits[param_name]
                         batch_params['poses'][:, param_idx].clamp_(min_val, max_val)
-            
-            # Update parameters
+
             optimizer.step()
-            
-            # Update learning rate
             scheduler.step()
-            
-            # Track best result
-            current_error = loss_dict['joint_position_error'].item()
+
+            current_error = loss_dict['joint_position_error']
+            current_error_mm = torch.sqrt(current_error) * 1000
+            error_improvement = last_error_mm - current_error_mm
+
             if current_error < best_error:
                 best_error = current_error
                 best_params = {
-                    'poses': batch_params['poses'].clone().detach(),
-                    'trans': batch_params['trans'].clone().detach(),
-                    'betas': batch_params['betas'].clone().detach()
+                    'poses': batch_params['poses'].detach().clone(),
+                    'trans': batch_params['trans'].detach().clone(),
+                    'betas': batch_params['betas'].detach().clone()
                 }
                 no_improvement_count = 0
             else:
                 no_improvement_count += 1
-            
-            # Convert current error to millimeters for comparison
-            current_error_mm = torch.sqrt(torch.tensor(current_error)) * 1000
-            
-            # Early stopping if error improvement is too small
-            error_improvement = last_error_mm - current_error_mm
+
             if error_improvement < min_error_improvement and no_improvement_count >= patience:
                 if self.debug:
-                    print(f"  Early stopping at iteration {iter_idx} due to small error improvement ({error_improvement:.2f}mm)")
+                    print(f"  Early stopping at iteration {iter_idx} due to small error improvement ({error_improvement.item():.2f}mm)")
                 break
-                
+
             last_error_mm = current_error_mm
-                
-            # Debug output
+
             if self.debug:
-                error_mm = torch.sqrt(torch.tensor(current_error)) * 1000  # Convert to mm
-                current_lr = optimizer.param_groups[0]['lr']
-                print(f"  Iteration {iter_idx}: Joint error: {error_mm:.2f} mm, LR: {current_lr:.6f}")
-        
-        # Plot loss and error history
-        self._plot_optimization_history(loss_history, error_history)
-        
-        # Compute final joint errors per frame and per joint
+                print(f"  Iteration {iter_idx}: Joint error: {current_error_mm.item():.2f} mm, LR: {optimizer.param_groups[0]['lr']:.6f}")
+
+        # Final forward pass for error computation
         with torch.no_grad():
             output = self.skel.forward(
                 poses=best_params['poses'],
@@ -349,26 +320,30 @@ class AnatomicalJointFitter:
                 poses_type='skel',
                 skelmesh=False
             )
-            
-            # Compute error per frame and per joint
-            errors = torch.sqrt(((output.joints - batch_params['target_joints'])**2).sum(dim=2))  # [batch_size, 24]
-            frame_errors = errors.mean(dim=1)  # Mean error across all joints, per frame
-            
-            # Compute and print per-joint errors
-            joint_errors = errors.mean(dim=0)  # Mean error across all frames, per joint
+
+            errors = torch.sqrt(((output.joints - batch_params['target_joints'])**2).sum(dim=2))
+            frame_errors = errors.mean(dim=1)
+            joint_errors = errors.mean(dim=0)
+
             print("\nPer-joint errors (mm):")
-            for joint_name, error in zip(self.joint_names, joint_errors.cpu().numpy() * 1000):
+            for joint_name, error in zip(self.joint_names, joint_errors.cpu() * 1000):
                 print(f"{joint_name:15s}: {error:.2f}")
-        
+
+        # Plotting (on CPU to avoid GPU stall)
+        self._plot_optimization_history(
+            [loss.item() for loss in loss_history],
+            [err.item() for err in error_history]
+        )
+
         return {
             'poses': best_params['poses'],
             'trans': best_params['trans'],
             'betas': best_params['betas'],
-            'joint_errors': frame_errors,
-            'loss_history': loss_history,
-            'error_history': error_history
+            'joint_errors': frame_errors.cpu(),
+            'loss_history': torch.tensor([loss.item() for loss in loss_history]),
+            'error_history': torch.tensor([err.item() for err in error_history])
         }
-    
+        
     def _compute_scapula_loss(self, poses):
         """
         Compute loss to regularize scapula movements.
@@ -397,7 +372,7 @@ class AnatomicalJointFitter:
             Spine regularization loss
         """
         # Spine indices (lumbar and thoracic)
-        spine_indices = range(17, 25)  # Lumbar and thoracic spine parameters
+        spine_indices = list(range(17, 25))  # Lumbar and thoracic spine parameters
         
         spine_poses = poses[:, spine_indices]
         spine_loss = torch.linalg.norm(spine_poses, ord=2)
@@ -432,7 +407,7 @@ class AnatomicalJointFitter:
         if poses.shape[0] > 1:
             time_loss = F.mse_loss(poses[1:], poses[:-1])
         else:
-            time_loss = torch.tensor(0.0, device=self.device)
+            time_loss = torch.tensor(0.0, device=poses.device)
         
         # Compute per-joint position errors (for reporting)
         per_joint_error = ((predicted_joints - target_joints)**2).sum(dim=2)  # [batch_size, 24]
@@ -456,11 +431,13 @@ class AnatomicalJointFitter:
         Args:
             joint_errors: Joint errors [num_frames]
         """
+        joint_errors_mm = joint_errors.detach().cpu().numpy() * 1000
+
         plt.figure(figsize=(10, 6))
-        plt.hist(joint_errors * 1000, bins=50)  # Convert to mm
+        plt.hist(joint_errors_mm, bins=50)  # Convert to mm
         plt.xlabel('Mean Joint Error (mm)')
         plt.ylabel('Frequency')
-        plt.title(f'Distribution of Joint Position Errors (Mean: {np.mean(joint_errors)*1000:.2f} mm)')
+        plt.title(f'Distribution of Joint Position Errors (Mean: {joint_errors_mm.mean():.2f} mm)')
         plt.savefig(os.path.join(self.output_dir, 'error_distribution.png'))
         plt.close()
         
@@ -477,8 +454,8 @@ class AnatomicalJointFitter:
         # For a full 3D visualization, you would need additional libraries
         
         # Extract the joints for the specified frame
-        target = target_joints[frame_idx]
-        pred = predicted_joints[frame_idx]
+        target = target_joints[frame_idx].detach().cpu().numpy()
+        pred = predicted_joints[frame_idx].detach().cpu().numpy()
         
         # Create a figure with two subplots
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
@@ -494,6 +471,7 @@ class AnatomicalJointFitter:
         ax2.set_aspect('equal')
         
         # Save the figure
+        os.makedirs(self.output_dir, exist_ok=True)
         plt.savefig(os.path.join(self.output_dir, f'joints_comparison_frame_{frame_idx}.png'))
         plt.close()
         
@@ -507,12 +485,19 @@ class AnatomicalJointFitter:
         """
         output_path = os.path.join(self.output_dir, filename)
         
+        def to_numpy_safe(x):
+            if isinstance(x, torch.Tensor):
+                return x.detach().cpu().numpy()
+            return x
+
         # Create a copy with numpy arrays to ensure serializability
         save_dict = {
-            'poses': results['poses'],
-            'trans': results['trans'],
-            'betas': results['betas'],
-            'joint_errors': results['joint_errors'],
+            'poses': to_numpy_safe(results['poses']),
+            'trans': to_numpy_safe(results['trans']),
+            'betas': to_numpy_safe(results['betas']),
+            'joint_errors': to_numpy_safe(results['joint_errors']),
+            'joints': to_numpy_safe(results['joints']),
+            'joints_ori': to_numpy_safe(results['joints_ori']),
             'gender': results['gender']
         }
         
@@ -522,97 +507,71 @@ class AnatomicalJointFitter:
         print(f"Results saved to {output_path}")
         
     def run_ik(self, 
-               anatomical_joints_file, 
-               output_file=None, 
-               max_iterations=800,
-               learning_rate=0.005,
-               pose_regularization=0.03,
-               trial=0,
-               visualize_frame=0):
+            anatomical_joints_file, 
+            output_file=None, 
+            max_iterations=800,
+            learning_rate=0.005,
+            pose_regularization=0.03,
+            trial=0,
+            visualize_frame=0):
         """
         Run inverse kinematics on a file containing SMPL joint positions.
-        
-        Args:
-            anatomical_joints_file: Path to file with SMPL joint positions
-            output_file: Path to save results (default is ik_results.pkl in output_dir)
-            max_iterations: Maximum iterations for optimization
-            learning_rate: Learning rate for the optimizer
-            pose_regularization: Weight for pose regularization
-            trial: Trial index to process (for data with multiple trials)
-            visualize_frame: Frame index to visualize (if debug is enabled)
-            
-        Returns:
-            Dictionary with optimized parameters and metrics, including:
-            - poses: Optimized pose parameters (PyTorch tensor)
-            - trans: Optimized translation parameters (PyTorch tensor)
-            - betas: Shape parameters (PyTorch tensor, fixed at zero)
-            - joints: Final joint positions (PyTorch tensor)
-            - joints_ori: Final joint orientations (PyTorch tensor)
-            - joint_errors: Per-frame joint position errors (PyTorch tensor)
         """
-        # Load the anatomical joint positions
         print(f"Loading anatomical joint data from {anatomical_joints_file}")
-        anatomical_joints = np.load(anatomical_joints_file)
-        
-        # Check if we need to select a specific trial
-        if isinstance(anatomical_joints, np.ndarray) and anatomical_joints.ndim == 4:
-            # Shape is [trials, joints, dims, frames], need to transpose to [frames, joints, dims]
-            anatomical_joints = anatomical_joints[trial].transpose(2, 0, 1)
-            print(f"Loaded trial {trial}, shape after transpose: {anatomical_joints.shape}")
+        anatomical_joints_np = np.load(anatomical_joints_file)
+
+        if isinstance(anatomical_joints_np, np.ndarray) and anatomical_joints_np.ndim == 4:
+            anatomical_joints_np = anatomical_joints_np[trial].transpose(2, 0, 1)
+            print(f"Loaded trial {trial}, shape after transpose: {anatomical_joints_np.shape}")
         else:
-            print(f"Loaded anatomical joints, shape: {anatomical_joints.shape}")
-        
-        # Fit the sequence
+            print(f"Loaded anatomical joints, shape: {anatomical_joints_np.shape}")
+
+        # Directly load to GPU
+        anatomical_joints = torch.from_numpy(anatomical_joints_np).float().to(self.device)
+
+        # Run optimization
         results = self.fit_sequence(
             anatomical_joints,
             max_iterations=max_iterations,
             learning_rate=learning_rate,
             pose_regularization=pose_regularization
         )
-        
-        # Get final joint positions and orientations
-        with torch.no_grad():
-            poses = torch.tensor(results['poses'], device=self.device)
-            betas = torch.tensor(results['betas'], device=self.device)
-            trans = torch.tensor(results['trans'], device=self.device)
-            
-            output = self.skel.forward(
-                poses=poses,
-                betas=betas,
-                trans=trans,
-                poses_type='skel',
-                skelmesh=False
-            )
-            
-            # Add joints and joints_ori to results as PyTorch tensors
-            results['joints'] = output.joints  # Keep as tensor
-            results['joints_ori'] = output.joints_ori  # Keep as tensor
-            results['poses'] = poses  # Keep as tensor
-            results['trans'] = trans  # Keep as tensor
-            results['betas'] = betas  # Keep as tensor
-            results['joint_errors'] = torch.tensor(results['joint_errors'], device=self.device)  # Convert to tensor
-        
-        # Visualize if debug is enabled
+
+        # Extract results (assumes tensors already on correct device)
+        poses = results['poses']
+        betas = results['betas']
+        trans = results['trans']
+        joint_errors = results['joint_errors']
+
+        # Forward pass to get joints and orientations
+        output = self.skel.forward(
+            poses=poses,
+            betas=betas,
+            trans=trans,
+            poses_type='skel',
+            skelmesh=False
+        )
+
+        # Add to results dict
+        results['joints'] = output.joints
+        results['joints_ori'] = output.joints_ori
+        results['poses'] = poses
+        results['trans'] = trans
+        results['betas'] = betas
+        results['joint_errors'] = joint_errors
+
+        # Optional visualization
         if self.debug:
-            predicted_joints = results['joints'].cpu().numpy()
-            self.visualize_results(anatomical_joints, predicted_joints, frame_idx=visualize_frame)
-        
-        # Save results (convert tensors to numpy for saving)
+            predicted_joints = results['joints'].cpu()
+            self.visualize_results(anatomical_joints.cpu(), predicted_joints, frame_idx=visualize_frame)
+
+        # Save to disk (convert tensors to NumPy where needed)
         if output_file is None:
             output_file = "ik_results.pkl"
-        save_dict = {
-            'poses': results['poses'].cpu().numpy(),
-            'trans': results['trans'].cpu().numpy(),
-            'betas': results['betas'].cpu().numpy(),
-            'joint_errors': results['joint_errors'].cpu().numpy(),
-            'joints': results['joints'].cpu().numpy(),
-            'joints_ori': results['joints_ori'].cpu().numpy(),
-            'gender': self.gender
-        }
-        self.save_results(save_dict, filename=output_file)
+        results['gender'] = self.gender
+        self.save_results(results, filename=output_file)
 
-        print("IK fitting complete!") 
-        
+        print("IK fitting complete!")
         return results
 
     def _plot_optimization_history(self, loss_history, error_history):
