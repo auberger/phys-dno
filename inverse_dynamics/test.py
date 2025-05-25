@@ -12,18 +12,9 @@ smpl_joints = smpl_joints[0].transpose(2,0,1)
 
 smpl_joints = torch.from_numpy(smpl_joints).to(device)
 
-output = run_ik(input_joints=smpl_joints, debug=True)
+output = run_ik(input_joints=smpl_joints, debug=False)
 
-#print(output['total_force'][100])
-grf = output['total_force']
-grf_magnitude = torch.norm(grf, p=2, dim=1)
-gravity = torch.tensor(735.75, device=device) # 75kg * 9.81 ms^-2
-target_forces = torch.full_like(grf_magnitude, gravity)
-print(f"First 5 magnitudes:\n{grf_magnitude[:5].detach().cpu().numpy()}")
-
-loss_fn = nn.MSELoss()
-
-magnitude_loss = loss_fn(grf_magnitude, target_forces)
-
-print(f"Calculated Magnitude MSE Loss: {magnitude_loss.item()}")
+print(output["total_loss"])
+print(output["translational_loss"])
+print(output["rotational_loss"])
 

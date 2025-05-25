@@ -667,18 +667,25 @@ class CondKeyLocationsLoss:
             # # if self.print_every is not None a:
             # #     print("%03d: %f" % (int(t[0]), float(loss_sum) / batch_size))
 
+            x_in_joints = torch.squeeze(x_in_joints)
+
             ####################
             # INVERSE DYNAMICS #
             ####################
-            dynamics = run_ik(x_in_joints[0])
-            grf = dynamics['total_force']
-            grf_magnitude = torch.norm(grf, p=2, dim=1)
-            gravity = torch.tensor(735.75, device=x_in_joints.device) # 75kg * 9.81 ms^-2
-            target_forces = torch.full_like(grf_magnitude, gravity)
-            loss_fn = F.mse_loss
-            kinematic_loss = loss_fn(grf_magnitude, target_forces)
+            dynamics_loss = run_ik(x_in_joints)
+            """{
+                "total_loss": total_loss,
+                "translational_loss": translational_loss,
+                "rotational_loss": rotational_loss,
+                "force_residual": force_residual,
+                "moment_residual": moment_residual,
+                "required_force": required_force,
+                "grf_moment_about_com": grf_moment_about_com,
+                "valid_cop_frames": valid_cop_mask.sum().item(),
+                "total_frames": B
+            }"""
 
-            loss_sum += kinematic_loss
+            loss_sum += dynamics_loss["translational_loss"]
 
             return loss_sum
 

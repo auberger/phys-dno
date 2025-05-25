@@ -109,8 +109,11 @@ class AnatomicalJointFitter:
 
         # SKEL pose parameter names for reference
         self.pose_param_names = kin_skel.pose_param_names
+
+        self.initial_poses = None
+        self.initial_trans = None
     
-    def _init_parameters(self, target_joints, initial_poses=None, initial_trans=None):
+    def _init_parameters(self, target_joints):
         """
         Initialize parameters for optimization.
         
@@ -125,7 +128,7 @@ class AnatomicalJointFitter:
         num_frames = target_joints.shape[0]
         
         # Initialize pose parameters
-        if initial_poses is None:
+        if self.initial_poses is None:
             # Initialize with zeros for most parameters
             poses = torch.zeros((num_frames, self.num_pose_params), device=self.device)
             
@@ -134,14 +137,14 @@ class AnatomicalJointFitter:
             poses[:, self.pose_param_names.index('knee_angle_r')] = 0.1
             poses[:, self.pose_param_names.index('knee_angle_l')] = 0.1
         else:
-            poses = torch.tensor(initial_poses, dtype=torch.float32, device=self.device)
+            poses = self.initial_poses.clone().detach().to(dtype=torch.float32, device=self.device)
             
         # Initialize translation parameters
-        if initial_trans is None:
+        if self.initial_trans is None:
             # Use target pelvis position as initial translation
             trans = target_joints[:, 0, :].clone().detach().to(dtype=torch.float32, device=self.device)
         else:
-            trans = initial_trans.clone().detach().to(dtype=torch.float32, device=self.device)
+            trans = self.initial_trans.clone().detach().to(dtype=torch.float32, device=self.device)
             
         # Beta is fixed at zero for this fitter (as per requirements)
         betas = torch.zeros((num_frames, 10), device=self.device)
@@ -155,8 +158,6 @@ class AnatomicalJointFitter:
     
     def fit_sequence(self, 
                      target_joints, 
-                     initial_poses=None, 
-                     initial_trans=None, 
                      max_iterations=20,
                      learning_rate=0.01,
                      pose_regularization=0.1):
@@ -179,7 +180,7 @@ class AnatomicalJointFitter:
         if self.debug: print(f"Fitting SKEL poses to {num_frames} frames of anatomical joint data")
         
         # Initialize parameters
-        params = self._init_parameters(target_joints, initial_poses, initial_trans)
+        params = self._init_parameters(target_joints)
         
         # Initialize the output dictionary
         res_dict = {
@@ -684,12 +685,16 @@ class AnatomicalJointFitter:
             results['trans'] = trans  # Keep as tensor
             results['betas'] = betas  # Keep as tensor
             results['joint_errors'] = torch.tensor(results['joint_errors'], device=self.device)  # Convert to tensor
-        
-        # Visualize if debug is enabled
+
+            # Save our poses so that we can start the next call from these as an initial guess
+            self.initial_poses = poses
+            self.initial_trans = trans
+
+        """         # Visualize if debug is enabled
         if self.debug:
             predicted_joints = results['joints'].cpu().numpy()
             self.visualize_results(anatomical_joints, predicted_joints, frame_idx=visualize_frame)
-        
+         """
         # Save results (convert tensors to numpy for saving)
         if output_file is not None:
             save_dict = {

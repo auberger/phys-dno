@@ -5,6 +5,9 @@ from inverse_dynamics.utils.animation import run_animation_workflow, animate_wit
 import inverse_dynamics.utils.anatomical_joint_regressor as joint_regressor
 import inverse_dynamics.utils.anatomical_joint_ik_adam as ik_fitter
 import inverse_dynamics.utils.contact_models_torch as contact_models_torch
+from inverse_dynamics.utils.center_of_mass_calculator import CenterOfMassCalculator
+from inverse_dynamics.utils.losses import calculate_dynamical_consistency_losses
+
 
 def run_ik(input_joints=None, npy_file="", debug=False):
 
@@ -89,71 +92,51 @@ def run_ik(input_joints=None, npy_file="", debug=False):
     ik_time = time.time() - start_time
     if debug: print(f"IK optimization took {ik_time:.2f} seconds")
 
-    ######################### Run contact model to get ground reaction forces and torques #########################
-    # Initialize model and move it to the correct device
-    if debug: print("Initializing contact model...")
-    start_time = time.time()
-    contact_model = contact_models_torch.ContactModel().to(device)
-    contact_init_time = time.time() - start_time
-    if debug: print(f"Contact model initialization took {contact_init_time:.2f} seconds")
 
-    # Move input tensors to the correct device
-    if debug: print("Computing contact forces...")
-    start_time = time.time()
-    joints = results['joints'].to(device)
-    joints_ori = results['joints_ori'].to(device)
+    ######################### Calculate Center of Mass and Inertia #########################
+    # Initialize the center of mass calculator
+    com_calculator = CenterOfMassCalculator()  
+
+    # Calculate center of mass properties and save as JSON
+    com_results = com_calculator.calculate_and_save_center_of_mass(
+        joints=results['joints'], 
+        joints_ori=results['joints_ori'],
+        save_results=False,  # Enable saving (can be set to False to skip saving)
+        print_summary=debug,  # Enable printing summary (can be set to False to skip printing)
+        fps=20.0,  # Frame rate for accurate velocity and acceleration calculation
+        smooth_derivatives=True  # Apply Savitzky-Golay smoothing for better derivatives (CoM velocity and acceleration)
+    )
+
+
+    ######################### Run contact model to get ground reaction forces and torques #########################
+    # Initialize model
+    contact_model = contact_models_torch.ContactModel()
 
     # Calculate contact forces and CoP
-    output = contact_model(joints, joints_ori)
-    contact_time = time.time() - start_time
-    if debug: print(f"Contact force computation took {contact_time:.2f} seconds")
+    output = contact_model(results["joints"], results["joints_ori"])
 
-    # Total forces and torques
-    total_force = output.force
-    total_cop = output.cop
+    # Calculate basic loss (scalar value)
+    total_loss = calculate_dynamical_consistency_losses(
+        com_results=com_results,
+        contact_output=output,
+        translational_weight=1.0,
+        rotational_weight=1.0,
+        return_detailed=True, # set to True to get detailed breakdown of losses
+        print_summary=debug
+    )
+    """{
+        "total_loss": total_loss,
+        "translational_loss": translational_loss,
+        "rotational_loss": rotational_loss,
+        "force_residual": force_residual,
+        "moment_residual": moment_residual,
+        "required_force": required_force,
+        "grf_moment_about_com": grf_moment_about_com,
+        "valid_cop_frames": valid_cop_mask.sum().item(),
+        "total_frames": B
+    }"""
 
-    # Right foot forces and torques
-    right_force = output.force_right
-    right_cop = output.cop_right
-
-    # Left foot forces and torques
-    left_force = output.force_left
-    left_cop = output.cop_left
-
-    # Sphere positions
-    sphere_positions = output.sphere_positions
-
-    # Print total execution time
-    total_time = init_time + regression_time + fitter_init_time + ik_time + contact_init_time + contact_time
-    if debug:
-        print("\nTotal execution time breakdown:")
-        print(f"Regressor initialization: {init_time:.2f} seconds")
-        print(f"Regressor prediction: {regression_time:.2f} seconds")
-        print(f"IK fitter initialization: {fitter_init_time:.2f} seconds")
-        print(f"IK optimization: {ik_time:.2f} seconds")
-        print(f"Contact model initialization: {contact_init_time:.2f} seconds")
-        print(f"Contact force computation: {contact_time:.2f} seconds")
-        print(f"Total execution time: {total_time:.2f} seconds")
-
-    # Create animation
-    # ani = animate_with_contact_forces(
-    #     joints=results['joints'],
-    #     joints_ori=results['joints_ori'],
-    #     trans=results['trans'],  # Keep trans for animation since it might be needed for visualization
-    #     contact_output=output,
-    #     fps=20,  # Adjust frame rate as needed
-    #     force_scale=0.001  # Adjust to make forces more/less visible
-    # )
-    retval = {
-        'total_force' : total_force,
-        'total_cop' : total_cop,
-        'right_force' : right_force,
-        'right_cop' : right_cop,
-        'left_force' : left_force,
-        'left_cop' : left_cop,
-        'sphere_positions' : sphere_positions,
-    }
-    return retval
+    return total_loss
 
 if __name__ == "__main__":
     npy_file = "save/samples_000500000_avg_seed20_a_person_is_jumping/pose_editing_dno/results.npy"
