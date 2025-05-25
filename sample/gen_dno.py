@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from tqdm import tqdm
+import random
 
 import data_loaders.humanml.utils.paramUtil as paramUtil
 from data_loaders.get_data import DatasetConfig, get_dataset_loader
@@ -27,9 +28,9 @@ from utils.output_util import (construct_template_variables, sample_to_motion,
 from utils.parser_util import generate_args
 
 
-def main(num_trials=3):
+def main(num_trials=1):
     num_ode_steps = 10
-    OPTIMIZATION_STEP = 100
+    OPTIMIZATION_STEP = 800
     #############################################
     ### Gradient Checkpointing
     # More DDIM steps will require more memory for full chain backprop.
@@ -72,12 +73,14 @@ def main(num_trials=3):
 
     dist_util.setup_dist(args.device)
     # Output directory
+    
     if out_path == "":
         # out_path = os.path.join(os.path.dirname(args.model_path),
         #                         'samples_{}_{}_seed{}_{}'.format(name, niter, args.seed, time.strftime("%Y%m%d-%H%M%S")))
+        rand_id = random.randint(10000, 99999)  # Generate random 5-digit number
         out_path = os.path.join(
             os.path.dirname(args.model_path),
-            "samples_{}_seed{}".format(niter, args.seed),
+            "samples_{}_seed{}_{}".format(niter, args.seed, rand_id),
         )
         if args.text_prompt != "":
             out_path += "_" + args.text_prompt.replace(" ", "_").replace(".", "")
@@ -197,6 +200,9 @@ def main(num_trials=3):
             data.dataset.t2m_dataset.inv_transform,
         )
         initial_motion = gen_motions[0][0].transpose(2, 0, 1)  # [120, 22, 3]
+        save_path = f"out/initial_motion_{rand_id}.txt"
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        np.savetxt(save_path, initial_motion.reshape(-1, 3), fmt="%.4f")
 
         task_info = {
             "task": task,
