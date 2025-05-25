@@ -4,7 +4,8 @@ import time
 from utils.animation import run_animation_workflow, animate_with_contact_forces
 import utils.anatomical_joint_regressor as joint_regressor
 import utils.anatomical_joint_ik_adam as ik_fitter
-import Aurel.skeleton_fitting.utils.contact_models_torch as contact_models_torch
+import utils.contact_models_torch as contact_models_torch
+from utils.center_of_mass_calculator import CenterOfMassCalculator
 
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -62,6 +63,36 @@ results = fitter.run_ik(
 )
 ik_time = time.time() - start_time
 print(f"IK optimization took {ik_time:.2f} seconds")
+
+
+
+######################### Calculate Center of Mass and Inertia #########################
+# Initialize the center of mass calculator
+com_calculator = CenterOfMassCalculator()  
+
+# Calculate center of mass properties and save as JSON
+com_results = com_calculator.calculate_and_save_center_of_mass(
+    joints=results['joints'], 
+    joints_ori=results['joints_ori'],
+    output_dir="Aurel/skeleton_fitting/output/com_analysis",
+    filename="com_analysis_results.json",
+    save_format="json",  # Save as JSON instead of PyTorch tensor
+    save_results=True,  # Enable saving (can be set to False to skip saving)
+    print_summary=True,  # Enable printing summary (can be set to False to skip printing)
+    fps=20.0,  # Frame rate for accurate velocity and acceleration calculation
+    smooth_derivatives=True  # Apply Savitzky-Golay smoothing for better derivatives (CoM velocity and acceleration)
+)
+
+com_position = com_results["com_position"]
+com_velocity = com_results["com_velocity"]
+com_acceleration = com_results["com_acceleration"]
+com_mass = com_results["total_mass"]
+com_inertia = com_results["inertia_tensor"] # The elements of inertia tensor (Vec6) as [Ixx Iyy Izz Ixy Ixz Iyz] measured about CoM
+
+
+
+
+
 
 ######################### Run contact model to get ground reaction forces and torques #########################
 # Initialize model and move it to the correct device
