@@ -670,7 +670,6 @@ class CondKeyLocationsLoss:
             ####################
             # INVERSE DYNAMICS #
             ####################
-            print(f"input device: {x_in_joints.device}")
             dynamics = run_ik(x_in_joints[0])
             grf = dynamics['total_force']
             grf_magnitude = torch.norm(grf, p=2, dim=1)

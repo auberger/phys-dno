@@ -10,7 +10,7 @@ smpl_joints = np.load(npy_file, allow_pickle=True).item()['motion']
 
 smpl_joints = smpl_joints[0].transpose(2,0,1)
 
-smpl_joints = torch.from_numpy(smpl_joints)
+smpl_joints = torch.from_numpy(smpl_joints).to(device)
 
 output = run_ik(input_joints=smpl_joints, debug=True)
 

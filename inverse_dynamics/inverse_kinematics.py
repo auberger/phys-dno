@@ -15,7 +15,7 @@ def run_ik(input_joints=None, npy_file="", debug=False):
 
     # Set device
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    if (debug is True): print(f"Using device: {device}")
+    if debug: print(f"Using device: {device}")
 
     # Animate joint locations of DNO output
     #motion_data, joint_distances_df, distance_data = run_animation_workflow(npy_file=npy_file)
@@ -33,12 +33,12 @@ def run_ik(input_joints=None, npy_file="", debug=False):
 
     # Time the regressor initialization and prediction
     start_time = time.time()
-    if (debug is True): print("Initializing regressor...")
+    if debug: print("Initializing regressor...")
     regressor = joint_regressor.SparseSMPLtoAnatomicalRegressor(output_dir=output_dir, debug=debug) # go to utils/anatomical_joint_regressor.py to change or retrain the regressor
     init_time = time.time() - start_time
-    if (debug is True): print(f"Regressor initialization took {init_time:.2f} seconds")
+    if debug: print(f"Regressor initialization took {init_time:.2f} seconds")
 
-    if (debug is True): print("Running regressor prediction...")
+    if debug: print("Running regressor prediction...")
     start_time = time.time()
     if (mode == 'FILE_MODE'):
         anatomical_joints = regressor.predict_anatomical_joints_from_file(
@@ -54,10 +54,10 @@ def run_ik(input_joints=None, npy_file="", debug=False):
             trial=trial_idx
         )
     regression_time = time.time() - start_time
-    if (debug is True): print(f"Regressor prediction took {regression_time:.2f} seconds")
+    if debug: print(f"Regressor prediction took {regression_time:.2f} seconds")
 
     ######################### Run IK to get anatomical joint locations from anatomical joint locations #########################
-    if (debug is True): print("Initializing IK fitter...")
+    if debug: print("Initializing IK fitter...")
     start_time = time.time()
     fitter = ik_fitter.AnatomicalJointFitter(
         output_dir=output_dir,
@@ -65,9 +65,9 @@ def run_ik(input_joints=None, npy_file="", debug=False):
         device=device  # Pass the device to the fitter
     )
     fitter_init_time = time.time() - start_time
-    if (debug is True): print(f"IK fitter initialization took {fitter_init_time:.2f} seconds")
+    if debug: print(f"IK fitter initialization took {fitter_init_time:.2f} seconds")
 
-    if (debug is True): print("Running IK optimization...")
+    if debug: print("Running IK optimization...")
     start_time = time.time()
     if (mode == 'FILE_MODE'):
         results = fitter.run_ik_from_file(
@@ -87,18 +87,18 @@ def run_ik(input_joints=None, npy_file="", debug=False):
             trial=trial_idx
         )
     ik_time = time.time() - start_time
-    if (debug is True): print(f"IK optimization took {ik_time:.2f} seconds")
+    if debug: print(f"IK optimization took {ik_time:.2f} seconds")
 
     ######################### Run contact model to get ground reaction forces and torques #########################
     # Initialize model and move it to the correct device
-    if (debug is True): print("Initializing contact model...")
+    if debug: print("Initializing contact model...")
     start_time = time.time()
     contact_model = contact_models_torch.ContactModel().to(device)
     contact_init_time = time.time() - start_time
-    if (debug is True): print(f"Contact model initialization took {contact_init_time:.2f} seconds")
+    if debug: print(f"Contact model initialization took {contact_init_time:.2f} seconds")
 
     # Move input tensors to the correct device
-    if (debug is True): print("Computing contact forces...")
+    if debug: print("Computing contact forces...")
     start_time = time.time()
     joints = results['joints'].to(device)
     joints_ori = results['joints_ori'].to(device)
@@ -106,7 +106,7 @@ def run_ik(input_joints=None, npy_file="", debug=False):
     # Calculate contact forces and CoP
     output = contact_model(joints, joints_ori)
     contact_time = time.time() - start_time
-    if (debug is True): print(f"Contact force computation took {contact_time:.2f} seconds")
+    if debug: print(f"Contact force computation took {contact_time:.2f} seconds")
 
     # Total forces and torques
     total_force = output.force
@@ -125,7 +125,7 @@ def run_ik(input_joints=None, npy_file="", debug=False):
 
     # Print total execution time
     total_time = init_time + regression_time + fitter_init_time + ik_time + contact_init_time + contact_time
-    if (debug is True):
+    if debug:
         print("\nTotal execution time breakdown:")
         print(f"Regressor initialization: {init_time:.2f} seconds")
         print(f"Regressor prediction: {regression_time:.2f} seconds")

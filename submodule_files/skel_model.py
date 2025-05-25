@@ -709,7 +709,7 @@ class SKEL(nn.Module):
             # Gk[:,[18,23]] = Gk[:,[16,21]] # hand has same orientation as ulna
             # Gk[:,[5,10]] = Gk[:,[4,9]] # toe has same orientation as calcaneus
             # Gk[:,[0,11,12,13,14,19]] = torch.eye(3, device=J_.device).view(1,3,3).expand(B, 6, 3, 3) # pelvis, torso and shoulder blade orientation does not vary with beta, leave it
-            joint_idx_fixed_beta_tensor = torch.tensor(self.joint_idx_fixed_beta, dtype=torch.long, device=J_.device)
+            joint_idx_fixed_beta_tensor = self.joint_idx_fixed_beta.clone().detach().to(dtype=torch.long, device=J_.device)
             Gk[:, joint_idx_fixed_beta_tensor] = torch.eye(3, device=J_.device).view(1,3,3).expand(B, len(self.joint_idx_fixed_beta), 3, 3) # pelvis, torso and shoulder blade orientation should not vary with beta, leave it
                
             Gk = torch.matmul(Gk, Gk_learned)

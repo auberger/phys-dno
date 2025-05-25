@@ -56,7 +56,7 @@ class AnatomicalJointFitter:
         self.debug = debug
         
         os.makedirs(output_dir, exist_ok=True)
-        if (self.debug is True): 
+        if self.debug: 
             print(f"Using device: {self.device}")
             print(f"Using gender: {self.gender}")
         
@@ -65,7 +65,7 @@ class AnatomicalJointFitter:
         
         # We'll optimize only pose parameters (theta), keeping beta at 0
         self.num_pose_params = self.skel.num_q_params
-        if (self.debug is True): print(f"SKEL model has {self.num_pose_params} pose parameters")
+        if self.debug: print(f"SKEL model has {self.num_pose_params} pose parameters")
         
         # Create a mapping between joint names and indices for easier reference
         self.joint_names = kin_skel.skel_joints_name
@@ -139,9 +139,9 @@ class AnatomicalJointFitter:
         # Initialize translation parameters
         if initial_trans is None:
             # Use target pelvis position as initial translation
-            trans = torch.tensor(target_joints[:, 0, :], dtype=torch.float32, device=self.device)
+            trans = target_joints[:, 0, :].clone().detach().to(dtype=torch.float32, device=self.device)
         else:
-            trans = torch.tensor(initial_trans, dtype=torch.float32, device=self.device)
+            trans = initial_trans.clone().detach().to(dtype=torch.float32, device=self.device)
             
         # Beta is fixed at zero for this fitter (as per requirements)
         betas = torch.zeros((num_frames, 10), device=self.device)
@@ -150,7 +150,7 @@ class AnatomicalJointFitter:
             'poses': poses,
             'betas': betas,
             'trans': trans,
-            'target_joints': torch.tensor(target_joints, dtype=torch.float32, device=self.device)
+            'target_joints': target_joints.clone().detach().to(dtype=torch.float32, device=self.device)
         }
     
     def fit_sequence(self, 
@@ -176,7 +176,7 @@ class AnatomicalJointFitter:
         """
         num_frames = target_joints.shape[0]
         
-        if (self.debug is True): print(f"Fitting SKEL poses to {num_frames} frames of anatomical joint data")
+        if self.debug: print(f"Fitting SKEL poses to {num_frames} frames of anatomical joint data")
         
         # Initialize parameters
         params = self._init_parameters(target_joints, initial_poses, initial_trans)
@@ -211,7 +211,7 @@ class AnatomicalJointFitter:
         mean_joint_error = np.mean(res_dict['joint_errors']) * 1000  # Convert to mm
         max_joint_error = np.max(res_dict['joint_errors']) * 1000  # Convert to mm
         
-        if (self.debug is True): print(f"Fitting complete. Mean joint error: {mean_joint_error:.2f} mm, Max joint error: {max_joint_error:.2f} mm")
+        if self.debug: print(f"Fitting complete. Mean joint error: {mean_joint_error:.2f} mm, Max joint error: {max_joint_error:.2f} mm")
         
         # If debug is enabled, plot the error distribution
         if self.debug:
@@ -357,9 +357,10 @@ class AnatomicalJointFitter:
             
             # Compute and print per-joint errors
             joint_errors = errors.mean(dim=0)  # Mean error across all frames, per joint
-            print("\nPer-joint errors (mm):")
-            for joint_name, error in zip(self.joint_names, joint_errors.cpu().numpy() * 1000):
-                print(f"{joint_name:15s}: {error:.2f}")
+            if self.debug:
+                print("\nPer-joint errors (mm):")
+                for joint_name, error in zip(self.joint_names, joint_errors.cpu().numpy() * 1000):
+                    print(f"{joint_name:15s}: {error:.2f}")
         
         return {
             'poses': best_params['poses'],
@@ -650,9 +651,9 @@ class AnatomicalJointFitter:
         if isinstance(anatomical_joints, np.ndarray) and anatomical_joints.ndim == 4:
             # Shape is [trials, joints, dims, frames], need to transpose to [frames, joints, dims]
             anatomical_joints = anatomical_joints[trial].transpose(2, 0, 1)
-            print(f"Loaded trial {trial}, shape after transpose: {anatomical_joints.shape}")
+            if self.debug: print(f"Loaded trial {trial}, shape after transpose: {anatomical_joints.shape}")
         else:
-            print(f"Loaded anatomical joints, shape: {anatomical_joints.shape}")
+            if self.debug: print(f"Loaded anatomical joints, shape: {anatomical_joints.shape}")
         
         # Fit the sequence
         results = self.fit_sequence(
@@ -702,7 +703,7 @@ class AnatomicalJointFitter:
             }
             self.save_results(save_dict, filename=output_file)
 
-        print("IK fitting complete!") 
+        if self.debug: print("IK fitting complete!") 
         
         return results
 
