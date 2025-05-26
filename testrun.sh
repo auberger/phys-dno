@@ -1,12 +1,9 @@
 #!/bin/bash
-
-#SBATCH --output=testrun_%j.out    
-#SBATCH --error=testrun_%j.err     
+    
 #SBATCH --gpus=1
 #SBATCH --account digital_human
 #SBATCH --time=48:00:00
-#SBATCH --output out/testtest.out
+#SBATCH --output out/GRF.out
 
 #nvidia-smi
-python -m sample.gen_dno --model_path ./save/model000500000_avg.pt --seed 42 --text_prompt "a person does squats" 
-#--load_from "save/samples_000500000_avg_seed42_a_person_is_standing_still/pose_editing_dno"
+python -m sample.gen_dno --model_path ./save/model000500000_avg.pt --seed 42 --text_prompt "a person is doing a long jump" 

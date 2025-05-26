@@ -9,7 +9,7 @@ from inverse_dynamics.utils.center_of_mass_calculator import CenterOfMassCalcula
 from inverse_dynamics.utils.losses import calculate_dynamical_consistency_losses
 
 
-def run_ik(input_joints=None, npy_file="", debug=False):
+def run_ik(input_joints=None, npy_file="", debug=False, initial_poses=None, initial_trans=None):
 
     if (input_joints is None and npy_file == ""): raise RuntimeError("inverse kinematics requires input joints or an input file")
 
@@ -65,7 +65,9 @@ def run_ik(input_joints=None, npy_file="", debug=False):
     fitter = ik_fitter.AnatomicalJointFitter(
         output_dir=output_dir,
         debug=debug,
-        device=device  # Pass the device to the fitter
+        device=device,  # Pass the device to the fitter
+        initial_poses=initial_poses,
+        initial_trans=initial_trans
     )
     fitter_init_time = time.time() - start_time
     if debug: print(f"IK fitter initialization took {fitter_init_time:.2f} seconds")
@@ -73,7 +75,7 @@ def run_ik(input_joints=None, npy_file="", debug=False):
     if debug: print("Running IK optimization...")
     start_time = time.time()
     if (mode == 'FILE_MODE'):
-        results = fitter.run_ik_from_file(
+        fitting_results = fitter.run_ik_from_file(
             anatomical_joints_file=output_file,
             output_file="jumping_ik_results.pkl",
             max_iterations=150,
@@ -82,7 +84,7 @@ def run_ik(input_joints=None, npy_file="", debug=False):
             trial=trial_idx
         )
     if (mode == 'JOINT_MODE'):
-        results = fitter.run_ik(
+        fitting_results = fitter.run_ik(
             anatomical_joints=anatomical_joints,
             max_iterations=150,
             learning_rate=0.1,
@@ -99,8 +101,8 @@ def run_ik(input_joints=None, npy_file="", debug=False):
 
     # Calculate center of mass properties and save as JSON
     com_results = com_calculator.calculate_and_save_center_of_mass(
-        joints=results['joints'], 
-        joints_ori=results['joints_ori'],
+        joints=fitting_results['joints'], 
+        joints_ori=fitting_results['joints_ori'],
         save_results=False,  # Enable saving (can be set to False to skip saving)
         print_summary=debug,  # Enable printing summary (can be set to False to skip printing)
         fps=20.0,  # Frame rate for accurate velocity and acceleration calculation
@@ -113,12 +115,12 @@ def run_ik(input_joints=None, npy_file="", debug=False):
     contact_model = contact_models_torch.ContactModel()
 
     # Calculate contact forces and CoP
-    output = contact_model(results["joints"], results["joints_ori"])
+    contact_output = contact_model(fitting_results["joints"], fitting_results["joints_ori"])
 
     # Calculate basic loss (scalar value)
     total_loss = calculate_dynamical_consistency_losses(
         com_results=com_results,
-        contact_output=output,
+        contact_output=contact_output,
         translational_weight=1.0,
         rotational_weight=1.0,
         return_detailed=True, # set to True to get detailed breakdown of losses
@@ -135,8 +137,15 @@ def run_ik(input_joints=None, npy_file="", debug=False):
         "valid_cop_frames": valid_cop_mask.sum().item(),
         "total_frames": B
     }"""
-
-    return total_loss
+    """
+            fitting_results['joints']
+            fitting_results['joints_ori']
+            fitting_results['poses']
+            fitting_results['trans']
+            fitting_results['betas']
+            fitting_results['joint_errors']
+    """
+    return total_loss, contact_output, fitting_results
 
 if __name__ == "__main__":
     npy_file = "save/samples_000500000_avg_seed20_a_person_is_jumping/pose_editing_dno/results.npy"

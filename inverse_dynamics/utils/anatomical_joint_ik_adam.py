@@ -35,7 +35,10 @@ class AnatomicalJointFitter:
                  gender="male", 
                  device=None, 
                  output_dir="output/fitter",
-                 debug=False):
+                 debug=False,
+                 initial_poses=None,
+                 initial_trans=None,
+                 ):
         """
         Initialize the fitter.
         
@@ -110,8 +113,8 @@ class AnatomicalJointFitter:
         # SKEL pose parameter names for reference
         self.pose_param_names = kin_skel.pose_param_names
 
-        self.initial_poses = None
-        self.initial_trans = None
+        self.initial_poses = initial_poses
+        self.initial_trans = initial_trans
     
     def _init_parameters(self, target_joints):
         """
@@ -219,7 +222,6 @@ class AnatomicalJointFitter:
             self._plot_error_distribution(res_dict['joint_errors'])
         
         return res_dict
-    
     def _optimize_batch(self, batch_params, max_iterations, learning_rate, pose_regularization):
         """
         Optimize a batch of frames.
@@ -234,17 +236,32 @@ class AnatomicalJointFitter:
             Dictionary with optimized parameters and metrics
         """
         # Create optimizer for pose and translation parameters
+        # Use smaller learning rate if we have initial poses
+        if self.initial_poses is not None:
+            effective_lr = learning_rate * 0.1  # Use 10% of the original learning rate
+            use_scheduler = True
+            if self.debug:
+                print(f"Using smaller learning rate {effective_lr:.6f} (10% of {learning_rate}) for refinement with initial poses")
+        else:
+            effective_lr = learning_rate
+            use_scheduler = True
+            if self.debug:
+                print(f"Using standard learning rate {effective_lr:.6f} with adaptive scheduling")
+            
         optimizer = torch.optim.Adam([
             {'params': batch_params['poses']},
             {'params': batch_params['trans']}
-        ], lr=learning_rate)
+        ], lr=effective_lr)
         
-        # Add learning rate scheduler
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, 
-            T_max=max_iterations,
-            eta_min=learning_rate * 0.01  # Minimum learning rate will be 1% of initial
-        )
+        # Add learning rate scheduler only if we don't have initial poses
+        if use_scheduler:
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, 
+                T_max=max_iterations,
+                eta_min=effective_lr * 0.01  # Minimum learning rate will be 1% of initial
+            )
+        else:
+            scheduler = None
         
         # Keep track of the best result
         best_error = float('inf')
@@ -263,7 +280,8 @@ class AnatomicalJointFitter:
         patience = 10  # Number of iterations to wait for improvement
         no_improvement_count = 0
         last_error_mm = float('inf')
-        
+        last_error = float('inf')
+
         # Optimization loop
         for iter_idx in range(max_iterations):
             optimizer.zero_grad()
@@ -306,7 +324,8 @@ class AnatomicalJointFitter:
             optimizer.step()
             
             # Update learning rate
-            scheduler.step()
+            if use_scheduler:
+                scheduler.step()
             
             # Track best result
             current_error = loss_dict['joint_position_error'].item()
@@ -326,11 +345,12 @@ class AnatomicalJointFitter:
             
             # Early stopping if error improvement is too small
             error_improvement = last_error_mm - current_error_mm
-            if error_improvement < min_error_improvement and no_improvement_count >= patience:
+            if abs(error_improvement) < min_error_improvement and no_improvement_count >= patience:
                 if self.debug:
                     print(f"  Early stopping at iteration {iter_idx} due to small error improvement ({error_improvement:.2f}mm)")
                 break
                 
+            last_error = current_error
             last_error_mm = current_error_mm
                 
             # Debug output
@@ -386,7 +406,8 @@ class AnatomicalJointFitter:
         scapula_indices = [26, 27, 28, 36, 37, 38]  # [right_abduction, right_elevation, right_rotation, left_abduction, left_elevation, left_rotation]
         
         scapula_poses = poses[:, scapula_indices]
-        scapula_loss = torch.linalg.norm(scapula_poses, ord=2)
+        # Use Frobenius norm instead of spectral norm to avoid SVD convergence issues
+        scapula_loss = torch.norm(scapula_poses, p='fro')
         return scapula_loss
     
     def _compute_spine_loss(self, poses):
@@ -403,7 +424,8 @@ class AnatomicalJointFitter:
         spine_indices = range(17, 25)  # Lumbar and thoracic spine parameters
         
         spine_poses = poses[:, spine_indices]
-        spine_loss = torch.linalg.norm(spine_poses, ord=2)
+        # Use Frobenius norm instead of spectral norm to avoid SVD convergence issues
+        spine_loss = torch.norm(spine_poses, p='fro')
         return spine_loss
 
     def _compute_losses(self, predicted_joints, target_joints, poses, pose_regularization):
