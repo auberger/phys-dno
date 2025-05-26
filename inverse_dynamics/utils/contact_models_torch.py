@@ -50,8 +50,8 @@ class ContactModel(nn.Module):
     """PyTorch module for calculating ground reaction forces using contact spheres."""
     
     def __init__(self,
-                 stiffness: float = 1e6,
-                 dissipation: float = 2.0,
+                 stiffness: float = 1e5,
+                 dissipation: float = 0.2,
                  static_friction: float = 0.8,
                  dynamic_friction: float = 0.8,
                  viscous_friction: float = 0.5,

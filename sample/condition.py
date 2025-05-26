@@ -674,47 +674,51 @@ class CondKeyLocationsLoss:
             ####################
             # INVERSE DYNAMICS #
             ####################
-            x_in_joints = torch.squeeze(x_in_joints)
 
-            dynamics_loss, contact_output, fitting_results = run_ik(x_in_joints, initial_poses=self.initial_poses, initial_trans=self.initial_trans, debug=False)
-            self.initial_poses = fitting_results["poses"]
-            self.initial_trans = fitting_results["trans"]
-            # """{
-            #     "total_loss": total_loss,
-            #     "translational_loss": translational_loss,
-            #     "rotational_loss": rotational_loss,
-            #     "force_residual": force_residual,
-            #     "moment_residual": moment_residual,
-            #     "required_force": required_force,
-            #     "grf_moment_about_com": grf_moment_about_com,
-            #     "valid_cop_frames": valid_cop_mask.sum().item(),
-            #     "total_frames": B
-            # }"""
-            com_loss = dynamics_loss["translational_loss"] * 0.1
-            print("translational loss")
-            print(com_loss)
-            #"""
-            #        ContactOutput containing:
-            #        - force: Total ground reaction force (B x 3)
-            #        - torque: Total ground reaction torque (B x 3)
-            #        - cop: Center of pressure (B x 3)
-            #        - sphere_forces: Individual sphere forces (B x N_spheres x 3)
-            #        - sphere_positions: Sphere positions (B x N_spheres x 3)
-            #        - force_right: Right foot ground reaction force (B x 3)
-            #        - force_left: Left foot ground reaction force (B x 3)
-            #        - torque_right: Right foot ground reaction torque (B x 3)
-            #        - torque_left: Left foot ground reaction torque (B x 3)
-            #        - cop_right: Right foot center of pressure (B x 3)
-            #        - cop_left: Left foot center of pressure (B x 3)
-            #    """
-            loss_fn = F.l1_loss
-            zeros = torch.zeros_like(contact_output.force_left)
-            left_leg_grf_loss = loss_fn(contact_output.force_left, zeros, reduction="mean") * 10**-3
-            print("left leg loss")
-            print(left_leg_grf_loss)
+            com_term = True
+            #right_leg_term = False
 
-            loss_sum += com_loss
-            loss_sum += left_leg_grf_loss
+            if (com_term):
+                x_in_joints = torch.squeeze(x_in_joints)
+
+                dynamics_loss, contact_output, fitting_results = run_ik(x_in_joints, initial_poses=self.initial_poses, initial_trans=self.initial_trans, debug=False)
+                self.initial_poses = fitting_results["poses"]
+                self.initial_trans = fitting_results["trans"]
+                # """{
+                #     "total_loss": total_loss,
+                #     "translational_loss": translational_loss,
+                #     "rotational_loss": rotational_loss,
+                #     "force_residual": force_residual,
+                #     "moment_residual": moment_residual,
+                #     "required_force": required_force,
+                #     "grf_moment_about_com": grf_moment_about_com,
+                #     "valid_cop_frames": valid_cop_mask.sum().item(),
+                #     "total_frames": B
+                # }"""
+                com_loss = dynamics_loss["translational_loss"] * 10
+                loss_sum += com_loss
+
+                #"""
+                #        ContactOutput containing:
+                #        - force: Total ground reaction force (B x 3)
+                #        - torque: Total ground reaction torque (B x 3)
+                #        - cop: Center of pressure (B x 3)
+                #        - sphere_forces: Individual sphere forces (B x N_spheres x 3)
+                #        - sphere_positions: Sphere positions (B x N_spheres x 3)
+                #        - force_right: Right foot ground reaction force (B x 3)
+                #        - force_left: Left foot ground reaction force (B x 3)
+                #        - torque_right: Right foot ground reaction torque (B x 3)
+                #        - torque_left: Left foot ground reaction torque (B x 3)
+                #        - cop_right: Right foot center of pressure (B x 3)
+                #        - cop_left: Left foot center of pressure (B x 3)
+                #    """
+
+                #if right_leg_term:
+                #    loss_fn = F.l1_loss
+                #    zeros = torch.zeros_like(contact_output.force_left)
+                #    left_leg_grf_loss = loss_fn(contact_output.force_left, zeros, reduction="mean") * 10**-3
+                #    loss_sum += left_leg_grf_loss
+
 
             return loss_sum
 

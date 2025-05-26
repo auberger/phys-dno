@@ -101,31 +101,11 @@ def task_pose_editing(task_info, args, target, target_mask):
     
     target_edit_list = [
         # (joint_index, keyframe, edit_dim, target(x, y, z))
-        # (21, 90, [1], [1.0]), # Right hand at frame 90th, edit height to 1.0
-        # (15, 90, [1], [0.6]), # Head at frame 90th, edit height to 1.0
-        
-        # a squat motion. txt
-        # -0.0097 0.9486 0.0031   - frame 30, pelvis
-        # -0.0315 0.4800 -0.1138  - frame 60, pelvis
-        # -0.0372 0.9491 0.0124   - frame 90, pelvis
 
-        # squat - normal
-        # (0, 30, [1], [0.9486]),
-        # (0, 70, [1], [0.1800]),
-        # (0, 110, [1], [0.9491])
-
-        # jump - normal
-        #(0, 60, [0], [0.0288]),
-        #(0, 30, [1], [0.9686]),
-        # (0, 60, [0], [1.7658]),
-        #(0, 60, [1], [1.8800]),
-        #(0, 90, [1], [0.9290]) 
-
-        (0, 30, [1], [0.9486]),
-        (0, 70, [1], [0.1800]),
-        (0, 110, [1], [0.9491]) 
+        (0, 60, [2], [1.7658])
 
     ]
+
     kframes = []
     obs_list = []
     for (joint_index, keyframe, edit_dim, target_loc) in target_edit_list:

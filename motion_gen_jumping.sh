@@ -1,10 +1,9 @@
 #!/bin/bash
   
-#SBATCH --error=out/jumping.err     
 #SBATCH --gpus=1
 #SBATCH --account digital_human
 #SBATCH --time=48:00:00
-#SBATCH --output out/jumping.out
+#SBATCH --output out/jumping_crazy.out
 
 #nvidia-smi
 
