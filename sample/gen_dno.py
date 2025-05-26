@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from tqdm import tqdm
+import random
 
 import data_loaders.humanml.utils.paramUtil as paramUtil
 from data_loaders.get_data import DatasetConfig, get_dataset_loader
@@ -29,7 +30,7 @@ from utils.parser_util import generate_args
 
 def main(num_trials=1):
     num_ode_steps = 10
-    OPTIMIZATION_STEP = 5
+    OPTIMIZATION_STEP = 800
     #############################################
     ### Gradient Checkpointing
     # More DDIM steps will require more memory for full chain backprop.
@@ -205,6 +206,10 @@ def main(num_trials=1):
             data.dataset.t2m_dataset.inv_transform,
         )
         initial_motion = gen_motions[0][0].transpose(2, 0, 1)  # [120, 22, 3]
+
+        save_path = os.path.join(out_path, "initial_motion.txt")
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        np.savetxt(save_path, initial_motion.reshape(-1, 3), fmt="%.4f")
 
         task_info = {
             "task": task,
