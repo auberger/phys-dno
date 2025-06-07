@@ -588,6 +588,8 @@ class CondKeyLocationsLoss:
         self.initial_poses = None
         self.initial_trans = None
 
+        self.com_loss_hist = []
+
     def __call__(self, xstart_in, y=None,): # *args, **kwds):
         """
         Args:
@@ -676,9 +678,9 @@ class CondKeyLocationsLoss:
             ####################
 
             com_term = True
-            #right_leg_term = False
+            right_leg_term = False
 
-            if (com_term):
+            if (com_term or right_leg_term):
                 x_in_joints = torch.squeeze(x_in_joints)
 
                 dynamics_loss, contact_output, fitting_results = run_ik(x_in_joints, initial_poses=self.initial_poses, initial_trans=self.initial_trans, debug=False)
@@ -695,8 +697,12 @@ class CondKeyLocationsLoss:
                 #     "valid_cop_frames": valid_cop_mask.sum().item(),
                 #     "total_frames": B
                 # }"""
-                com_loss = dynamics_loss["translational_loss"] * 10
-                loss_sum += com_loss
+                com_loss = dynamics_loss["translational_loss"]
+
+                # add the loss term to a list so that we can plot it later
+                self.com_loss_hist.append(com_loss.cpu())
+
+                if (com_term): loss_sum += com_loss
 
                 #"""
                 #        ContactOutput containing:
@@ -713,11 +719,11 @@ class CondKeyLocationsLoss:
                 #        - cop_left: Left foot center of pressure (B x 3)
                 #    """
 
-                #if right_leg_term:
-                #    loss_fn = F.l1_loss
-                #    zeros = torch.zeros_like(contact_output.force_left)
-                #    left_leg_grf_loss = loss_fn(contact_output.force_left, zeros, reduction="mean") * 10**-3
-                #    loss_sum += left_leg_grf_loss
+                if (right_leg_term):
+                    loss_fn = F.l1_loss
+                    zeros = torch.zeros_like(contact_output.force_left)
+                    left_leg_grf_loss = loss_fn(contact_output.force_left, zeros, reduction="mean") * 10**-3
+                    loss_sum += left_leg_grf_loss
 
 
             return loss_sum

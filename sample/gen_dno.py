@@ -30,7 +30,7 @@ from utils.parser_util import generate_args
 
 def main(num_trials=1):
     num_ode_steps = 10
-    OPTIMIZATION_STEP = 300
+    OPTIMIZATION_STEP = 100
     #############################################
     ### Gradient Checkpointing
     # More DDIM steps will require more memory for full chain backprop.
@@ -415,6 +415,18 @@ def main(num_trials=1):
                 plt.legend([key])
                 plt.savefig(os.path.join(out_path, f"trial_{i}_{key}.png"))
                 plt.close()
+
+            com_hist = loss_fn.com_loss_hist
+            plt.figure()
+            plt.semilogy(hist["step"], com_hist)
+            # plt.ylim(top=0.4)
+            # Plot horizontal red line at lowest point of loss function
+            min_loss = min(com_hist)
+            plt.axhline(y=min_loss, color="r")
+            plt.text(0, min_loss, f"Min Loss: {min_loss:.4f}", color="r")
+            plt.legend("Center of mass loss")
+            plt.savefig(os.path.join(out_path, f"trial_{i}_com_loss.png"))
+            plt.close()
 
         final_out = out["x"].detach().clone()
 
