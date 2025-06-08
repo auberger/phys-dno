@@ -1,8 +1,8 @@
 name: gmd
 channels:
+  - anaconda
   - pytorch
   - nvidia
-  - anaconda
   - defaults
   - conda-forge
 dependencies:
@@ -17,6 +17,7 @@ dependencies:
   - pytorch-cuda=11.6
   - scikit-learn=1.0.2
   - scipy=1.7.3
+  - ffmpeg
   - six
   - spacy=3.3.1
   - torchaudio
@@ -30,4 +31,3 @@ dependencies:
     - PyYaml
     - tensorboard
     - einops
-prefix: /disk2/guytevet/anaconda3/envs/mdm-venv

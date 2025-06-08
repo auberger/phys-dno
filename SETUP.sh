@@ -1,10 +1,5 @@
 #!/bin/bash
 
-# add the remaining dependencies
-python -m spacy download en_core_web_sm
-pip install git+https://github.com/openai/CLIP.git
-conda install anaconda::ffmpeg
-
 # install skel
 cd external
 git clone https://github.com/MarilynKeller/SKEL.git
