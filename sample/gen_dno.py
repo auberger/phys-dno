@@ -30,7 +30,7 @@ from utils.parser_util import generate_args
 
 def main(num_trials=1):
     num_ode_steps = 10
-    OPTIMIZATION_STEP = 100
+    OPTIMIZATION_STEP = 300
     #############################################
     ### Gradient Checkpointing
     # More DDIM steps will require more memory for full chain backprop.

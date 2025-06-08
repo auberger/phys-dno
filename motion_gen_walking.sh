@@ -3,7 +3,7 @@
 #SBATCH --gpus=1
 #SBATCH --account digital_human
 #SBATCH --time=48:00:00
-#SBATCH --output out/walking_last.out
+#SBATCH --output out/walking.out
 
 #nvidia-smi
 
