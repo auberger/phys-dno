@@ -24,7 +24,7 @@ from inverse_dynamics.utils.losses import calculate_dynamical_consistency_losses
 
 ######################### User Input #########################
 # Data path
-npy_file = "save/samples_000500000_avg_seed20_a_person_is_jumping/pose_editing_dno/results.npy"
+npy_file = "save/seed52_4758_a_person_is_doing_a_squat/results.npy"
 output_dir = "inverse_dynamics/output"  # Relative path from project root
 trial_idx = 1
 

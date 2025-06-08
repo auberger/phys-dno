@@ -136,4 +136,5 @@ kit/
 t2m/
 glove/
 body_models/
+inverse_dynamics/output/
 .vscode/
