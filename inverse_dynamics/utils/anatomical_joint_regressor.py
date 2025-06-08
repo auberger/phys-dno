@@ -535,7 +535,12 @@ class SparseSMPLtoAnatomicalRegressor:
 
         # Handle input: load from .npy or use existing tensor
         if isinstance(smpl_joints_input, str):
-            smpl_joints_data = np.load(smpl_joints_input)
+            try:
+                smpl_joints_data = np.load(smpl_joints_input)
+            except:
+                smpl_joints_data = np.load(smpl_joints_input, allow_pickle=True)
+                smpl_joints_data = smpl_joints_data.item()["motion"]
+        
             # Assuming input is [trials, joints, dims, frames]
             # Select the specified trial and permute to [frames, joints, dims]
             if smpl_joints_data.ndim == 4:
