@@ -1,7 +1,6 @@
 import os
 import torch
 import time
-from inverse_dynamics.utils.animation import run_animation_workflow, animate_with_contact_forces
 import inverse_dynamics.utils.anatomical_joint_regressor as joint_regressor
 import inverse_dynamics.utils.anatomical_joint_ik_adam as ik_fitter
 import inverse_dynamics.utils.contact_models_torch as contact_models_torch
@@ -20,8 +19,6 @@ def run_ik(input_joints=None, npy_file="", debug=False, initial_poses=None, init
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     if debug: print(f"Using device: {device}")
 
-    # Animate joint locations of DNO output
-    #motion_data, joint_distances_df, distance_data = run_animation_workflow(npy_file=npy_file)
 
     ######################### Apply regressor to motion sequence to get anatomical joint locations from SMPL joints #########################
     if (mode == 'FILE_MODE'):
