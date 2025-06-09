@@ -130,7 +130,7 @@ This directory implements a complete physics validation pipeline that transforms
 ### Training & Testing
 - **`train.py`** - Trains the sparse linear regressor that maps SMPL joints to anatomical joint positions
   - Uses stratified pose sampling and Lasso regression with anatomical locality constraints
-  - Achieves <1cm RMSE with >89% sparsity
+  - Achieves ~1cm RMSE with >89% sparsity
 - **`test.py`** - Quick test script to validate pipeline functionality and compute physics losses
 
 ### Visualization
