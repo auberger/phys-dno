@@ -227,7 +227,7 @@ Validates Euler's equation: `M_GRF + M_gravity = dL/dt`
 
 ## Advanced Visualization (3D Meshes)
 
-For high-quality mesh rendering with surface geometry, use [aitviewer-skel](https://github.com/MarilynKeller/aitviewer-skel).
+For high-quality mesh rendering with surface geometry, use [aitviewer-skel](https://github.com/MarilynKeller/aitviewer-skel) (requires python >= 3.9).
 
 ![SKEL Visualization with Contact Spheres](./assets/skel_with_contact.gif)
 
